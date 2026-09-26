@@ -6,8 +6,10 @@
     <key>CFBundleIdentifier</key><string>dev.whisper-bro</string>
     <key>CFBundleExecutable</key><string>whisper-bro</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <!-- Both version strings are stamped from Cargo.toml by scripts/package-macos.sh.
+         0.0.0 marks a copy that was never packaged. -->
+    <key>CFBundleShortVersionString</key><string>0.0.0</string>
+    <key>CFBundleVersion</key><string>0</string>
     <key>LSMinimumSystemVersion</key><string>12.0</string>
     <key>LSUIElement</key><true/>
     <key>NSMicrophoneUsageDescription</key><string>Whisper Bro records speech when you press the dictation shortcut.</string>

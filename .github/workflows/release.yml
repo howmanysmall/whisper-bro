@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish, such as v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    uses: ./.github/workflows/check.yml
+
+  publish:
+    needs: check
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Validate the tag
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Expected a release tag like v0.1.0, got '$TAG'"
+            exit 1
+          fi
+
+      - name: Check out sources
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Match the tag against Cargo.toml
+        run: |
+          version="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::Tag $TAG does not match the Cargo.toml version $version"
+            exit 1
+          fi
+
+      - name: Download the packages
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksum the packages
+        run: |
+          cd dist
+          sha256sum -- * > SHA256SUMS.txt
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=(--verify-tag --generate-notes --title "Whisper Bro $TAG")
+          if [[ "$TAG" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # A previous attempt created the release; finish uploading to it.
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --draft=false
+          else
+            # Uploads every asset before the release becomes visible.
+            gh release create "$TAG" dist/* "${flags[@]}"
+          fi

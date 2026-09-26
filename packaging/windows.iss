@@ -1,5 +1,14 @@
 #define AppName "Whisper Bro"
-#define AppVersion "0.1.0"
+
+; The version and binary path come from Cargo.toml and the build directory via
+; scripts/package-windows-installer.ps1 (mise run package:windows). These
+; fallbacks are for manual ISCC runs; 0.0.0 marks an unstamped build.
+#ifndef AppVersion
+  #define AppVersion "0.0.0"
+#endif
+#ifndef AppBinary
+  #define AppBinary "..\target\release\whisper-bro.exe"
+#endif
 
 [Setup]
 AppId=dev.whisper-bro
@@ -19,7 +28,7 @@ UninstallDisplayIcon={app}\whisper-bro.exe
 CloseApplications=yes
 
 [Files]
-Source: "..\target\release\whisper-bro.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AppBinary}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Configure Whisper Bro.cmd"; DestDir: "{app}"; Flags: ignoreversion
 
