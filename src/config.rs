@@ -17,6 +17,8 @@ pub struct Config {
     pub max_recording_seconds: u64,
     pub finalize_timeout_ms: u64,
     pub cleanup: CleanupConfig,
+    pub transcription_model: String,
+    pub transcription_timeout_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -47,6 +49,8 @@ impl Default for Config {
             max_recording_seconds: 600,
             finalize_timeout_ms: 4000,
             cleanup: CleanupConfig::default(),
+            transcription_model: "openai/whisper-large-v3-turbo".into(),
+            transcription_timeout_ms: 60_000,
         }
     }
 }
@@ -80,6 +84,14 @@ impl Config {
             "Escape is reserved for cancel"
         );
         ensure!(!self.language.trim().is_empty(), "language cannot be empty");
+        ensure!(
+            !self.transcription_model.trim().is_empty(),
+            "transcription_model cannot be empty"
+        );
+        ensure!(
+            (1000..=120_000).contains(&self.transcription_timeout_ms),
+            "transcription_timeout_ms must be 1000–120000"
+        );
         ensure!(
             (1..=3600).contains(&self.max_recording_seconds),
             "max_recording_seconds must be 1–3600"

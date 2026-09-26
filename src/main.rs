@@ -125,16 +125,18 @@ fn execute(cli: Cli) -> Result<()> {
         Command::Doctor => {
             println!("Configuration: {}", paths.config.display());
             println!("Recovery and logs: {}", paths.data.display());
-            for key in ["DEEPGRAM_API_KEY", "GROQ_API_KEY"] {
-                println!(
-                    "{key}: {}",
-                    if credentials::get(key)?.is_some() {
-                        "available"
-                    } else {
-                        "not configured"
-                    }
-                );
-            }
+            println!(
+                "OPENROUTER_API_KEY: {}",
+                if credentials::get("OPENROUTER_API_KEY")?.is_some() {
+                    "available"
+                } else {
+                    "not configured"
+                }
+            );
+            println!(
+                "Transcription: {} (upload after stop)",
+                config.transcription_model
+            );
             println!("Shortcut: {} ({:?})", config.shortcut, config.mode);
             println!("Cleanup: {}", config.cleanup.enabled);
             println!("{}", platform::permission_status());
@@ -146,11 +148,11 @@ fn execute(cli: Cli) -> Result<()> {
             no_cleanup,
         } => {
             config.cleanup.enabled &= !no_cleanup;
-            let credentials = Credentials::load(config.cleanup.enabled)?;
+            let credentials = Credentials::load()?;
             app::runtime()?.block_on(transcribe_file(config, credentials, file, realtime))
         }
         Command::Run => {
-            let credentials = Credentials::load(config.cleanup.enabled)?;
+            let credentials = Credentials::load()?;
             init_log(&paths)?;
             app::run(config, paths, credentials)
         }
@@ -161,28 +163,26 @@ fn setup(config: &mut Config, paths: &Paths) -> Result<()> {
     platform::setup_console();
     ensure!(
         io::stdin().is_terminal(),
-        "Run setup in a terminal. For automation, set DEEPGRAM_API_KEY and use `whisper-bro config` to inspect defaults"
+        "Run setup in a terminal. For automation, set OPENROUTER_API_KEY and use `whisper-bro config` to inspect defaults"
     );
     eprintln!(
-        "Speech uses Deepgram; optional text cleanup uses Groq. Keys are stored in the OS credential store."
+        "Transcription and optional cleanup use OpenRouter. Your key is stored in the OS credential store."
     );
     let key = Zeroizing::new(rpassword::prompt_password(
-        "Deepgram API key (Enter keeps existing): ",
+        "OpenRouter API key (Enter keeps existing): ",
     )?);
     if !key.trim().is_empty() {
-        credentials::set("DEEPGRAM_API_KEY", &key)?;
+        credentials::set("OPENROUTER_API_KEY", &key)?;
     }
     ensure!(
-        credentials::get("DEEPGRAM_API_KEY")?.is_some(),
-        "A Deepgram API key is required: https://console.deepgram.com/"
+        credentials::get("OPENROUTER_API_KEY")?.is_some(),
+        "An OpenRouter API key is required: https://openrouter.ai/settings/keys"
     );
-    let key = Zeroizing::new(rpassword::prompt_password(
-        "Groq API key for cleanup (optional; Enter keeps current setting): ",
-    )?);
-    if !key.trim().is_empty() {
-        credentials::set("GROQ_API_KEY", &key)?;
-        config.cleanup.enabled = true;
-    }
+    eprint!("Enable text cleanup? [y/N]: ");
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    config.cleanup.enabled = matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes");
     config.save(&paths.config)?;
     println!(
         "Saved {}\nShortcut: {} ({:?})\nCleanup: {}\nRun `whisper-bro run` to start. Enable login startup with `whisper-bro autostart enable`.",
@@ -258,7 +258,7 @@ async fn transcribe_file(
         }
         Instant::now()
     });
-    let result = speech::transcribe(&config, &credentials.deepgram, spec.sample_rate, rx).await;
+    let result = speech::transcribe(&config, &credentials.openrouter, spec.sample_rate, rx).await;
     if result.is_err() {
         producer.abort();
     }
@@ -268,7 +268,7 @@ async fn transcribe_file(
     let (text, status) = cleanup::clean(
         &client,
         &config.cleanup,
-        credentials.groq.as_deref().map(|s| s.as_str()),
+        Some(credentials.openrouter.as_str()),
         &transcript.text,
     )
     .await;

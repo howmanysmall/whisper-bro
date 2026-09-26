@@ -1,5 +1,5 @@
 [tools]
-rust = "1.98.1"
+rust = { version = "1.98.1", components = ["rustfmt", "clippy"] }
 
 [tasks.build]
 description = "Build the release binary"
@@ -31,11 +31,29 @@ depends = ["build"]
 run = "bash scripts/package-macos.sh"
 
 [tasks."package:windows"]
-description = "Build a Windows installer (requires Inno Setup 6)"
+description = "Build the Windows portable zip and installer (installer requires Inno Setup 6)"
 depends = ["build"]
-run = "iscc packaging/windows.iss"
+run = [
+  "powershell -NoProfile -File scripts/package-windows.ps1",
+  "powershell -NoProfile -File scripts/package-windows-installer.ps1",
+]
 
 [tasks."package:windows-portable"]
 description = "Build a portable Windows zip"
 depends = ["build"]
 run = "powershell -NoProfile -File scripts/package-windows.ps1"
+
+[tasks.release]
+description = "Check, tag, and push a release so GitHub Actions publishes it. Pass patch, minor, major, or an explicit version; with no argument it releases the version already in Cargo.toml."
+usage = 'arg "[level]" default="release" help="patch, minor, major, release, or an explicit X.Y.Z"'
+tools = { "github:crate-ci/cargo-release" = "1.1.6" }
+run = [
+  "mise run check",
+  "cargo release --execute {{usage.level}}",
+]
+
+[tasks."release:dry-run"]
+description = "Preview a release without committing, tagging, or pushing (same argument as release)"
+usage = 'arg "[level]" default="release" help="patch, minor, major, release, or an explicit X.Y.Z"'
+tools = { "github:crate-ci/cargo-release" = "1.1.6" }
+run = "cargo release {{usage.level}}"

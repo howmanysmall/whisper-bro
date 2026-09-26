@@ -132,7 +132,7 @@ pub fn run(config: Config, paths: Paths, credentials: Credentials) -> Result<()>
                         let task = runtime.spawn(async move {
                             let result = match speech::transcribe(
                                 &config,
-                                &credentials.deepgram,
+                                &credentials.openrouter,
                                 sample_rate,
                                 audio,
                             )
@@ -143,7 +143,7 @@ pub fn run(config: Config, paths: Paths, credentials: Credentials) -> Result<()>
                                     let (text, cleanup_status) = cleanup::clean(
                                         &client,
                                         &config.cleanup,
-                                        credentials.groq.as_deref().map(|s| s.as_str()),
+                                        Some(credentials.openrouter.as_str()),
                                         &transcript.text,
                                     )
                                     .await;
@@ -216,7 +216,7 @@ pub fn run(config: Config, paths: Paths, credentials: Credentials) -> Result<()>
             if current.stopped.is_some_and(|t| {
                 t.elapsed()
                     > Duration::from_millis(
-                        config.finalize_timeout_ms + config.cleanup.timeout_ms + 8000,
+                        config.transcription_timeout_ms + config.cleanup.timeout_ms + 8000,
                     )
             }) {
                 session.take();

@@ -1,0 +1,14 @@
+# Releases are distributed through GitHub Releases, not crates.io.
+allow-branch = ["main"]
+publish = false
+
+push = true
+push-remote = "origin"
+
+# One crate, so one commit per release. That keeps {{version}} available in the
+# commit message below.
+consolidate-commits = false
+pre-release-commit-message = "chore: release {{version}}"
+
+tag-name = "v{{version}}"
+tag-message = "Whisper Bro {{version}}"

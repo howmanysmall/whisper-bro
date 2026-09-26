@@ -3,8 +3,7 @@ use zeroize::Zeroizing;
 
 #[derive(Clone)]
 pub struct Credentials {
-    pub deepgram: Zeroizing<String>,
-    pub groq: Option<Zeroizing<String>>,
+    pub openrouter: Zeroizing<String>,
 }
 
 const SERVICE: &str = "dev.whisper-bro";
@@ -34,15 +33,10 @@ pub fn set(name: &str, value: &str) -> Result<()> {
 }
 
 impl Credentials {
-    pub fn load(cleanup: bool) -> Result<Self> {
-        let deepgram = get("DEEPGRAM_API_KEY")?.context(
-            "Missing Deepgram API key. Run `whisper-bro setup` first, or set DEEPGRAM_API_KEY",
+    pub fn load() -> Result<Self> {
+        let openrouter = get("OPENROUTER_API_KEY")?.context(
+            "Missing OpenRouter API key. Run `whisper-bro setup` first, or set OPENROUTER_API_KEY",
         )?;
-        let groq = if cleanup {
-            Some(get("GROQ_API_KEY")?.context("Cleanup is enabled but GROQ_API_KEY is missing. Run `whisper-bro setup` or disable cleanup in config.toml")?)
-        } else {
-            None
-        };
-        Ok(Self { deepgram, groq })
+        Ok(Self { openrouter })
     }
 }

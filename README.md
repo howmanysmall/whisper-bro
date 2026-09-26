@@ -77,13 +77,30 @@ Speech requests use Deepgram's [`mip_opt_out=true`](https://developers.deepgram.
 mise run check
 mise run build
 mise run package:macos
-# On Windows, with Inno Setup 6 on PATH:
+# On Windows:
 mise run package:windows
 ```
 
-The macOS package is written under `dist/`. Local bundles are ad-hoc signed. For distribution, set `MACOS_SIGNING_IDENTITY` to an installed Developer ID certificate; set `APPLE_NOTARY_PROFILE` to an existing notarytool keychain profile to notarize and staple. Windows packaging produces a per-user installer with a setup shortcut.
+The macOS package is written under `dist/`. Local bundles are ad-hoc signed. For distribution, set `MACOS_SIGNING_IDENTITY` to an installed Developer ID certificate; set `APPLE_NOTARY_PROFILE` to an existing notarytool keychain profile to notarize and staple. On Windows, `package:windows` writes the per-user installer and the portable `.zip` side by side; `mise run package:windows-portable` skips the installer, which is the part that needs Inno Setup 6.
+
+Every package stamps its version from `Cargo.toml` at build time, so the app bundle and the installer can't disagree with the crate.
 
 CI runs formatting, Clippy, and tests on macOS and Windows, packages each native build, and cross-builds an Intel Mac bundle. These checks don't replace testing microphone permissions, hotkeys, and insertion in real applications.
+
+## Release
+
+Releases come from `main`, and one command cuts them. Mise installs [cargo-release](https://github.com/crate-ci/cargo-release) on first use:
+
+```sh
+mise run release:dry-run patch   # preview
+mise run release patch           # 0.1.0 -> 0.1.1
+```
+
+The argument is `patch`, `minor`, `major`, or an explicit version like `0.2.0`; with none, it releases whatever `Cargo.toml` already says. The command runs `mise run check`, then bumps `Cargo.toml` and `Cargo.lock` together, commits `chore: release X.Y.Z`, tags `vX.Y.Z`, and pushes. It refuses a dirty tree or any branch but `main`.
+
+That tag starts the release workflow: the same checks run on macOS and Windows, every package builds, and everything lands in a GitHub release with generated notes and `SHA256SUMS.txt`. A tag like `v0.2.0-rc.1` publishes as a prerelease. The release is created only after every build succeeds, so a red build leaves no half-published release — just a tag to retry from. Re-running the workflow retries the upload, and the workflow refuses a tag that disagrees with `Cargo.toml`. If the tag itself is wrong, delete it (`git push origin :refs/tags/vX.Y.Z`) and run the release command again.
+
+The downloads are `Whisper Bro.app` for Apple Silicon and Intel, `whisper-bro-windows-x64-setup.exe`, and `whisper-bro-windows-x64-portable.zip`. None of them are signed yet: macOS bundles come out ad-hoc signed, so open the app with right-click → **Open** the first time, and the Windows installer will trip SmartScreen's "More info → Run anyway".
 
 ## Measure the part that matters
 
