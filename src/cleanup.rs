@@ -36,7 +36,7 @@ pub async fn clean(
         config,
         key,
         raw,
-        "https://api.groq.com/openai/v1/chat/completions",
+        "https://openrouter.ai/api/v1/chat/completions",
     )
     .await
 }

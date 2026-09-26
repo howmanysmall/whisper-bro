@@ -59,6 +59,111 @@ pub async fn transcribe(
     sample_rate: u32,
     audio: mpsc::Receiver<Vec<u8>>,
 ) -> Result<Transcript, SpeechFailure> {
+    transcribe_at(
+        config,
+        key,
+        sample_rate,
+        audio,
+        "https://openrouter.ai/api/v1/audio/transcriptions",
+    )
+    .await
+}
+
+async fn transcribe_at(
+    config: &Config,
+    key: &str,
+    sample_rate: u32,
+    mut audio: mpsc::Receiver<Vec<u8>>,
+    endpoint: &str,
+) -> Result<Transcript, SpeechFailure> {
+    use base64::Engine;
+    let failure = |message: String| SpeechFailure {
+        message,
+        partial: String::new(),
+    };
+    let mut pcm = Vec::new();
+    let limit = sample_rate as u64 * config.max_recording_seconds * 2;
+    while let Some(frame) = audio.recv().await {
+        let remaining = limit.saturating_sub(pcm.len() as u64) as usize;
+        pcm.extend_from_slice(&frame[..frame.len().min(remaining)]);
+    }
+    if pcm.is_empty() {
+        return Ok(Transcript {
+            text: String::new(),
+            connect_ms: 0,
+            finalize_ms: 0,
+        });
+    }
+    let stopped = Instant::now();
+    let result = async {
+        let mut wav = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = hound::WavWriter::new(
+                &mut wav,
+                hound::WavSpec {
+                    channels: 1,
+                    sample_rate,
+                    bits_per_sample: 16,
+                    sample_format: hound::SampleFormat::Int,
+                },
+            )?;
+            for sample in pcm.as_chunks::<2>().0 {
+                writer.write_sample(i16::from_le_bytes(*sample))?;
+            }
+            writer.finalize()?;
+        }
+        drop(pcm);
+        let mut body = serde_json::json!({
+            "model": config.transcription_model,
+            "input_audio": { "data": base64::engine::general_purpose::STANDARD.encode(wav.into_inner()), "format": "wav" },
+            "language": config.language,
+            "temperature": 0,
+        });
+        if !config.vocabulary.is_empty() {
+            let prompt = config.vocabulary.join(", ");
+            body["provider"] = serde_json::json!({"options": {"groq": {"prompt": prompt}, "deepinfra/us": {"prompt": prompt}}});
+        }
+        #[derive(Deserialize)]
+        struct Response {
+            text: String,
+        }
+        let response = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .build()?
+            .post(endpoint)
+            .bearer_auth(key)
+            .json(&body)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<Response>()
+            .await?;
+        Ok::<_, anyhow::Error>(response.text)
+    };
+    let text = timeout(
+        Duration::from_millis(config.transcription_timeout_ms),
+        result,
+    )
+    .await
+    .map_err(|_| failure("OpenRouter transcription timed out".into()))?
+    .map_err(|error| failure(format!("OpenRouter transcription failed: {error}")))?;
+    Ok(Transcript {
+        text,
+        connect_ms: 0,
+        finalize_ms: stopped.elapsed().as_millis(),
+    })
+}
+
+#[cfg(test)]
+#[path = "speech_tests.rs"]
+mod tests;
+
+pub async fn transcribe_deepgram(
+    config: &Config,
+    key: &str,
+    sample_rate: u32,
+    audio: mpsc::Receiver<Vec<u8>>,
+) -> Result<Transcript, SpeechFailure> {
     let started = Instant::now();
     let connect = async {
         let mut request = request_url(config, sample_rate)?
