@@ -1,0 +1,41 @@
+[tools]
+rust = "1.98.1"
+
+[tasks.build]
+description = "Build the release binary"
+run = "cargo build --locked --release"
+
+[tasks.dev]
+description = "Run the background dictation utility"
+run = "cargo run --locked -- run"
+
+[tasks.test]
+description = "Run unit and local protocol integration tests"
+run = "cargo test --locked --all-targets"
+
+[tasks.fmt]
+description = "Format Rust sources"
+run = "cargo fmt --all"
+
+[tasks.check]
+description = "Check formatting, lint, and test in sequence"
+run = [
+  "cargo fmt --all -- --check",
+  "cargo clippy --locked --all-targets -- -D warnings",
+  "cargo test --locked --all-targets",
+]
+
+[tasks."package:macos"]
+description = "Build a macOS app bundle and zip"
+depends = ["build"]
+run = "bash scripts/package-macos.sh"
+
+[tasks."package:windows"]
+description = "Build a Windows installer (requires Inno Setup 6)"
+depends = ["build"]
+run = "iscc packaging/windows.iss"
+
+[tasks."package:windows-portable"]
+description = "Build a portable Windows zip"
+depends = ["build"]
+run = "powershell -NoProfile -File scripts/package-windows.ps1"

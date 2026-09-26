@@ -1,0 +1,51 @@
+name: Check and package
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v3
+      - uses: Swatinem/rust-cache@v2
+      - run: mise run check
+      - run: mise run build
+      - if: runner.os == 'macOS'
+        run: mise run package:macos
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/package-windows.ps1
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging/windows.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whisper-bro-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            dist/*.zip
+            dist/*.exe
+
+  macos-intel:
+    runs-on: macos-15
+    env:
+      CARGO_BUILD_TARGET: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v3
+      - run: mise exec -- rustup target add x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: mise run package:macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whisper-bro-macOS-intel
+          path: dist/*.zip
