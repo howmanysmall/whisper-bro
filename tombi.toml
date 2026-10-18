@@ -30,6 +30,32 @@ dotted-keys-out-of-order = "warn"
 key-empty = "warn"
 tables-out-of-order = "warn"
 
+[lsp]
+code-action.enabled = true
+completion.enabled = true
+diagnostic.enabled = true
+document-link.enabled = true
+formatting.enabled = true
+goto-declaration.enabled = true
+goto-definition.enabled = true
+goto-type-definition.enabled = true
+hover.enabled = true
+workspace-diagnostic.enabled = true
+
+[schema]
+enabled = true
+strict = true
+catalog = {
+	paths = [
+		"tombi://www.schemastore.org/api/json/catalog.json",
+		"https://www.schemastore.org/api/json/catalog.json",
+	]
+}
+
+[[schemas]]
+path = "node_modules/fallow/schema.json"
+include = ["fallow.toml"]
+
 [[schemas]]
 path = "https://mise.jdx.dev/schema/mise.json"
 include = ["mise*.toml"]
