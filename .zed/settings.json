@@ -40,7 +40,6 @@
 	},
 	"jsx_tag_auto_close": { "enabled": true },
 	"languages": {
-		"JavaScript": { "language_servers": [] },
 		"JSON": {
 			"code_actions_on_format": {
 				"source.fixAll.biome": true,
@@ -99,6 +98,15 @@
 			"prettier": { "allowed": false },
 			"tab_size": 4
 		},
+		"JavaScript": { "language_servers": [] },
+		"MDX": {
+			"format_on_save": "on",
+			"formatter": {
+				"language_server": { "name": "oxfmt" }
+			},
+			"language_servers": ["codebook", "harper-ls", "oxfmt", "rumdl", "wakatime"],
+			"prettier": { "allowed": false }
+		},
 		"Markdown": {
 			"format_on_save": "on",
 			"formatter": {
@@ -109,14 +117,6 @@
 			"prettier": { "allowed": false },
 			"show_whitespaces": "none",
 			"tab_size": 4
-		},
-		"MDX": {
-			"format_on_save": "on",
-			"formatter": {
-				"language_server": { "name": "oxfmt" }
-			},
-			"language_servers": ["codebook", "harper-ls", "oxfmt", "rumdl", "wakatime"],
-			"prettier": { "allowed": false }
 		},
 		"Plain Text": {
 			"language_servers": ["codebook", "dependi", "harper-ls", "wakatime"]
