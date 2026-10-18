@@ -1,0 +1,35 @@
+{
+	"name": "whisper-bro",
+	"version": "0.0.0",
+	"description": "A dumb speech to text app.",
+	"license": "MIT",
+	"author": "HowManySmall",
+	"type": "module",
+	"private": true,
+	"bugs": {
+		"url": "https://github.com/howmanysmall/whisper-bro/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/howmanysmall/whisper-bro.git"
+	},
+	"scripts": {
+		"biome": "biome",
+		"commitlint": "commitlint",
+		"oxfmt": "oxfmt",
+		"release": "bumpp",
+		"skills": "skills"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "catalog:lint",
+		"@commitlint/cli": "catalog:commitlint",
+		"@commitlint/config-conventional": "catalog:commitlint",
+		"@commitlint/types": "catalog:commitlint",
+		"bumpp": "catalog:tooling",
+		"@types/node": "catalog:types",
+		"skills": "catalog:tooling",
+		"oxfmt": "catalog:lint",
+		"typescript": "catalog:tooling"
+	},
+	"packageManager": "pnpm@12.14.0"
+}
