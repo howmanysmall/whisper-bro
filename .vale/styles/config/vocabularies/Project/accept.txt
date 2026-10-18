@@ -2,3 +2,12 @@
 (?i)\bhooks?\b
 (?i)\bGod\b
 (?i)\bsimple\b
+# Product and format names in README.md.
+ChatGPT
+DeepInfra
+GPT
+OpenRouter
+SmartScreen
+(?i)TOML
+(?i)WAV
+Whisper Bro
