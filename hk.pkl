@@ -31,6 +31,9 @@ local GENERATED_DATA = List("**/*-lock.{json,yaml}", "Cargo.lock", "mise.lock")
 
 local fileChecks = new Mapping<String, Step> {
   ["cargo-fmt"] = Builtins.cargo_fmt
+  // Advisories, licenses, and sources from deny.toml. Runs only when the
+  // manifest, lockfile, or deny.toml changes.
+  ["cargo-deny"] = Builtins.cargo_deny
   ["cargo-clippy"] = (Builtins.cargo_clippy) {
     glob = RUST_FILES
     depends = List("cargo-fmt")
@@ -84,7 +87,7 @@ local fileChecks = new Mapping<String, Step> {
     }
   }
   ["jactionlint"] = (Builtins.jactionlint) {
-    glob = ACTION_FILES
+    glob = ACTION_FILES + List(".github/dependabot.yml")
     batch = false
     diagnostic_format = "sarif"
     check = (Builtins.jactionlint.check) {
