@@ -1,3 +1,3 @@
 @echo off
-"%~dp0whisper-bro.exe" setup
+"%~dp0yap.exe" setup
 pause

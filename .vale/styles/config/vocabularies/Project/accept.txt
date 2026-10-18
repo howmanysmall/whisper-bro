@@ -10,7 +10,7 @@ OpenRouter
 SmartScreen
 (?i)TOML
 (?i)WAV
-Whisper Bro
+Yap
 # Speech-to-text model names and metrics in README.md.
 ASR
 MAI

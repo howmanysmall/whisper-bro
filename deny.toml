@@ -2,7 +2,7 @@
 # Run locally with `cargo deny check`.
 
 [graph]
-# Only the platforms whisper-bro ships for, so Linux-only dependencies don't
+# Only the platforms yap ships for, so Linux-only dependencies don't
 # fail the checks.
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"]
 all-features = true

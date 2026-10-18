@@ -2264,39 +2264,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "whisper-bro"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "base64 0.23.1",
- "clap",
- "core-foundation 0.10.1",
- "cpal",
- "directories",
- "fs2",
- "futures-util",
- "hound",
- "keyring",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "reqwest",
- "rpassword",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tokio-tungstenite",
- "toml",
- "tracing",
- "tracing-subscriber",
- "url",
- "windows 0.62.2",
- "zeroize",
-]
-
-[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2702,6 +2669,39 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+
+[[package]]
+name = "yap"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "clap",
+ "core-foundation 0.10.1",
+ "cpal",
+ "directories",
+ "fs2",
+ "futures-util",
+ "hound",
+ "keyring",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "reqwest",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "windows 0.62.2",
+ "zeroize",
+]
 
 [[package]]
 name = "yoke"

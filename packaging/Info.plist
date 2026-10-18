@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-    <key>CFBundleName</key><string>Whisper Bro</string>
-    <key>CFBundleDisplayName</key><string>Whisper Bro</string>
-    <key>CFBundleIdentifier</key><string>dev.whisper-bro</string>
-    <key>CFBundleExecutable</key><string>whisper-bro</string>
+    <key>CFBundleName</key><string>Yap</string>
+    <key>CFBundleDisplayName</key><string>Yap</string>
+    <key>CFBundleIdentifier</key><string>dev.yap</string>
+    <key>CFBundleExecutable</key><string>yap</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <!-- Both version strings are stamped from Cargo.toml by scripts/package-macos.sh.
          0.0.0 marks a copy that was never packaged. -->
@@ -12,6 +12,6 @@
     <key>CFBundleVersion</key><string>0</string>
     <key>LSMinimumSystemVersion</key><string>12.0</string>
     <key>LSUIElement</key><true/>
-    <key>NSMicrophoneUsageDescription</key><string>Whisper Bro records speech when you press the dictation shortcut.</string>
+    <key>NSMicrophoneUsageDescription</key><string>Yap records speech when you press the dictation shortcut.</string>
     <key>NSHighResolutionCapable</key><true/>
 </dict></plist>

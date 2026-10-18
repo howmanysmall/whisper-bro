@@ -1,16 +1,16 @@
 {
-	"name": "whisper-bro",
+	"name": "yap",
 	"version": "1.0.0",
 	"private": true,
 	"description": "A dumb speech to text app.",
 	"bugs": {
-		"url": "https://github.com/howmanysmall/whisper-bro/issues"
+		"url": "https://github.com/howmanysmall/yap/issues"
 	},
 	"license": "MIT",
 	"author": "HowManySmall",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/howmanysmall/whisper-bro.git"
+		"url": "git+https://github.com/howmanysmall/yap.git"
 	},
 	"type": "module",
 	"scripts": {

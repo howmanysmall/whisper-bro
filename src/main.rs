@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand};
-use whisper_bro::{
+use yap::{
     app, audio, cleanup,
     config::Config,
     credentials::{self, Credentials},
@@ -73,7 +73,7 @@ fn main() {
     let cli = Cli::parse();
     let background = matches!(cli.command, None | Some(Command::Run));
     if let Err(error) = execute(cli) {
-        eprintln!("whisper-bro: {error:#}");
+        eprintln!("yap: {error:#}");
         if background {
             platform::startup_error(&format!("{error:#}"));
         }
@@ -163,7 +163,7 @@ fn setup(config: &mut Config, paths: &Paths) -> Result<()> {
     platform::setup_console();
     ensure!(
         io::stdin().is_terminal(),
-        "Run setup in a terminal. For automation, set OPENROUTER_API_KEY and use `whisper-bro config` to inspect defaults"
+        "Run setup in a terminal. For automation, set OPENROUTER_API_KEY and use `yap config` to inspect defaults"
     );
     eprintln!(
         "Transcription and optional cleanup use OpenRouter. Your key is stored in the OS credential store."
@@ -185,7 +185,7 @@ fn setup(config: &mut Config, paths: &Paths) -> Result<()> {
     config.cleanup.enabled = matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes");
     config.save(&paths.config)?;
     println!(
-        "Saved {}\nShortcut: {} ({:?})\nCleanup: {}\nRun `whisper-bro run` to start. Enable login startup with `whisper-bro autostart enable`.",
+        "Saved {}\nShortcut: {} ({:?})\nCleanup: {}\nRun `yap run` to start. Enable login startup with `yap autostart enable`.",
         paths.config.display(),
         config.shortcut,
         config.mode,
@@ -196,9 +196,9 @@ fn setup(config: &mut Config, paths: &Paths) -> Result<()> {
 
 fn init_log(paths: &Paths) -> Result<()> {
     fs::create_dir_all(&paths.data)?;
-    let path = paths.data.join("whisper-bro.log");
+    let path = paths.data.join("yap.log");
     if fs::metadata(&path).is_ok_and(|m| m.len() > 2_000_000) {
-        let previous = paths.data.join("whisper-bro.previous.log");
+        let previous = paths.data.join("yap.previous.log");
         if previous.exists() {
             fs::remove_file(&previous)?;
         }

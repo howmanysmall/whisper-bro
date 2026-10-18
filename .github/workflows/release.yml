@@ -118,7 +118,7 @@ jobs:
         with:
           path: dist
           # Leaves out the release notes coverage report.
-          pattern: whisper-bro-*
+          pattern: yap-*
           merge-multiple: true
 
       - name: Checksum the packages
@@ -134,7 +134,7 @@ jobs:
           else
             notes=(--generate-notes)
           fi
-          flags=(--verify-tag --title "Whisper Bro $TAG" "${notes[@]}")
+          flags=(--verify-tag --title "Yap $TAG" "${notes[@]}")
           if [[ "$TAG" == *-* ]]; then
             flags+=(--prerelease)
           fi

@@ -6,7 +6,7 @@ pub struct Credentials {
     pub openrouter: Zeroizing<String>,
 }
 
-const SERVICE: &str = "dev.whisper-bro";
+const SERVICE: &str = "dev.yap";
 
 pub fn get(name: &str) -> Result<Option<Zeroizing<String>>> {
     if let Ok(value) = std::env::var(name)
@@ -35,7 +35,7 @@ pub fn set(name: &str, value: &str) -> Result<()> {
 impl Credentials {
     pub fn load() -> Result<Self> {
         let openrouter = get("OPENROUTER_API_KEY")?.context(
-            "Missing OpenRouter API key. Run `whisper-bro setup` first, or set OPENROUTER_API_KEY",
+            "Missing OpenRouter API key. Run `yap setup` first, or set OPENROUTER_API_KEY",
         )?;
         Ok(Self { openrouter })
     }
