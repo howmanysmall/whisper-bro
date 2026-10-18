@@ -54,21 +54,45 @@ The utility joins `vocabulary` into a prompt that shows the transcription model 
 
 ### Pick a transcription model
 
-Last checked 2026-10-18 against the [Artificial Analysis non-streaming leaderboard](https://artificialanalysis.ai/speech-to-text/non-streaming). The utility uploads the finished recording, so the streaming board doesn't apply. Only models that OpenRouter's transcription endpoint serves count here.
+Last checked 2026-10-18 against the [Artificial Analysis non-streaming leaderboard](https://artificialanalysis.ai/speech-to-text/non-streaming). The utility uploads the finished recording, so the streaming board doesn't apply.
 
-| Category         | Model                         | `transcription_model`           | Word error rate | Speed factor | USD per 1,000 minutes |
-| ---------------- | ----------------------------- | ------------------------------- | --------------- | ------------ | --------------------- |
-| Best performance | MAI-Transcribe-2              | `microsoft/mai-transcribe-2`    | 2.0%            | 317          | 1.67                  |
-| Best value       | Whisper Large v3 Turbo (Groq) | `openai/whisper-large-v3-turbo` | 4.6%            | 195          | 0.67                  |
-| Best overall     | MAI-Transcribe-2              | `microsoft/mai-transcribe-2`    | 2.0%            | 317          | 1.67                  |
+A model is eligible when OpenRouter's transcription endpoint serves it through the provider the leaderboard benchmarked, and its word error rate is 5% or lower. Fourteen models qualify. Each category ranks them by its own rule:
 
-Word error rate is AA-WER v2, where lower is better. Speed factor is seconds of audio transcribed per second. Prices are the leaderboard's, and OpenRouter lists MAI-Transcribe-2 at the same $0.10 an hour.
+- **Best performance**: lowest word error rate. Ties go to the faster model.
+- **Best value**: lowest price. Ties go to the lower error rate, then the faster model.
+- **Best overall**: lowest sum of the model's three ranks among eligible models, one each for error rate, speed, and price. Ties go to the lower error rate.
 
-MAI-Transcribe-2 has the lowest error rate of any model on OpenRouter, and it's also one of the fastest at a near-bottom price. It wins both performance and overall. The one model ahead of it, Alibaba's Fun-Realtime-ASR-preview at 1.7%, isn't on OpenRouter. ElevenLabs Scribe v2 (`elevenlabs/scribe-v2`, 2.2%) is the runner-up. Whisper Large v3 Turbo stays the default because it's the cheapest benchmarked option and still fast, though it makes more than twice as many errors as MAI-Transcribe-2.
+Word error rate is AA-WER v2, where lower is better. Speed is seconds of audio transcribed per second, so 317× turns a minute of speech into text in under 0.2 seconds. Prices are what OpenRouter charges for the benchmarked provider, in USD per 1,000 minutes of audio.
 
-Switching away from Whisper drops `vocabulary`, since OpenRouter passes the prompt only to Groq and DeepInfra.
+#### Best performance
 
-Cleanup is off by default. When on, it fixes punctuation and capitalization, removes filler, repetitions, and false starts, and applies spoken self-corrections before insertion: "Friday, actually Monday" becomes "Monday." It keeps names, numbers, and technical identifiers as spoken, and doesn't summarize or answer the text. It keeps the original transcript if its request times out, fails, or produces truncated output. It doesn't hold the result indefinitely waiting for an edit.
+| Rank | Model              | `transcription_model`          | Word error rate | Speed (× real time) | USD per 1,000 minutes |
+| ---- | ------------------ | ------------------------------ | --------------- | ------------------- | --------------------- |
+| 1    | MAI-Transcribe-2   | `microsoft/mai-transcribe-2`   | 2.0%            | 317×                | $1.67                 |
+| 2    | Scribe v2          | `elevenlabs/scribe-v2`         | 2.2%            | 63×                 | $1.83                 |
+| 3    | MAI-Transcribe-1.5 | `microsoft/mai-transcribe-1.5` | 2.4%            | 81×                 | $6.00                 |
+
+#### Best value
+
+| Rank | Model                         | `transcription_model`            | Word error rate | Speed (× real time) | USD per 1,000 minutes |
+| ---- | ----------------------------- | -------------------------------- | --------------- | ------------------- | --------------------- |
+| 1    | Whisper Large v3 Turbo (Groq) | `openai/whisper-large-v3-turbo`  | 4.6%            | 195×                | $0.67                 |
+| 2    | Voxtral Mini (DeepInfra)      | `mistralai/voxtral-mini-3b-2507` | 3.8%            | 51×                 | $1.00                 |
+| 3    | Parakeet TDT 0.6B v3          | `nvidia/parakeet-tdt-0.6b-v3`    | 4.5%            | 527×                | $1.50                 |
+
+#### Best overall
+
+| Rank | Model                | `transcription_model`         | Rank sum | Word error rate | Speed (× real time) | USD per 1,000 minutes |
+| ---- | -------------------- | ----------------------------- | -------- | --------------- | ------------------- | --------------------- |
+| 1    | MAI-Transcribe-2     | `microsoft/mai-transcribe-2`  | 7        | 2.0%            | 317×                | $1.67                 |
+| 2    | Parakeet TDT 0.6B v3 | `nvidia/parakeet-tdt-0.6b-v3` | 15       | 4.5%            | 527×                | $1.50                 |
+| 3    | Scribe v2            | `elevenlabs/scribe-v2`        | 16       | 2.2%            | 63×                 | $1.83                 |
+
+MAI-Transcribe-2 leads overall because it places first on error rate, second on speed, and fourth on price. Parakeet is the fastest eligible model but ranks near the bottom on accuracy. Scribe v2 comes within 0.2 points of MAI-Transcribe-2's error rate but runs at a fifth of its speed.
+
+Whisper Large v3 Turbo stays the default as the value pick. OpenRouter also routes it to DeepInfra at $0.20, which the leaderboard hasn't benchmarked. Switching away from Whisper drops `vocabulary`, since OpenRouter passes the prompt only to Groq and DeepInfra.
+
+Some models fall outside the rules. Alibaba's Fun-Realtime-ASR-preview has the lowest error rate on the leaderboard at 1.7%, but OpenRouter doesn't serve it. OpenRouter serves Voxtral Small only through DeepInfra, while the leaderboard benchmarked Mistral's own API. Deepgram Nova-3 makes 5.2% errors.
 
 Other commands:
 
