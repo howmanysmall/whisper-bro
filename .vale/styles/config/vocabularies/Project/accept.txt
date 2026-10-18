@@ -14,7 +14,6 @@ Whisper Bro
 # Speech-to-text model names and metrics in README.md.
 ASR
 MAI
-6B
 TDT
 USD
 WER

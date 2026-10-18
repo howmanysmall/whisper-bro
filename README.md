@@ -66,7 +66,7 @@ Word error rate is AA-WER v2, where lower is better. Speed is seconds of audio t
 
 #### Best performance
 
-| Rank | Model              | `transcription_model`          | Word error rate | Speed (× real time) | USD per 1,000 minutes |
+| Rank | Model              | `transcription_model`          | Word error rate | Speed vs. real time | USD per 1,000 minutes |
 | ---- | ------------------ | ------------------------------ | --------------- | ------------------- | --------------------- |
 | 1    | MAI-Transcribe-2   | `microsoft/mai-transcribe-2`   | 2.0%            | 317×                | $1.67                 |
 | 2    | Scribe v2          | `elevenlabs/scribe-v2`         | 2.2%            | 63×                 | $1.83                 |
@@ -74,21 +74,21 @@ Word error rate is AA-WER v2, where lower is better. Speed is seconds of audio t
 
 #### Best value
 
-| Rank | Model                         | `transcription_model`            | Word error rate | Speed (× real time) | USD per 1,000 minutes |
-| ---- | ----------------------------- | -------------------------------- | --------------- | ------------------- | --------------------- |
-| 1    | Whisper Large v3 Turbo (Groq) | `openai/whisper-large-v3-turbo`  | 4.6%            | 195×                | $0.67                 |
-| 2    | Voxtral Mini (DeepInfra)      | `mistralai/voxtral-mini-3b-2507` | 3.8%            | 51×                 | $1.00                 |
-| 3    | Parakeet TDT 0.6B v3          | `nvidia/parakeet-tdt-0.6b-v3`    | 4.5%            | 527×                | $1.50                 |
+| Rank | Model                          | `transcription_model`            | Word error rate | Speed vs. real time | USD per 1,000 minutes |
+| ---- | ------------------------------ | -------------------------------- | --------------- | ------------------- | --------------------- |
+| 1    | Whisper Large v3 Turbo on Groq | `openai/whisper-large-v3-turbo`  | 4.6%            | 195×                | $0.67                 |
+| 2    | Voxtral Mini on DeepInfra      | `mistralai/voxtral-mini-3b-2507` | 3.8%            | 51×                 | $1.00                 |
+| 3    | Parakeet TDT 0.6B v3           | `nvidia/parakeet-tdt-0.6b-v3`    | 4.5%            | 527×                | $1.50                 |
 
 #### Best overall
 
-| Rank | Model                | `transcription_model`         | Rank sum | Word error rate | Speed (× real time) | USD per 1,000 minutes |
+| Rank | Model                | `transcription_model`         | Rank sum | Word error rate | Speed vs. real time | USD per 1,000 minutes |
 | ---- | -------------------- | ----------------------------- | -------- | --------------- | ------------------- | --------------------- |
 | 1    | MAI-Transcribe-2     | `microsoft/mai-transcribe-2`  | 7        | 2.0%            | 317×                | $1.67                 |
 | 2    | Parakeet TDT 0.6B v3 | `nvidia/parakeet-tdt-0.6b-v3` | 15       | 4.5%            | 527×                | $1.50                 |
 | 3    | Scribe v2            | `elevenlabs/scribe-v2`        | 16       | 2.2%            | 63×                 | $1.83                 |
 
-MAI-Transcribe-2 leads overall because it places first on error rate, second on speed, and fourth on price. Parakeet is the fastest eligible model but ranks near the bottom on accuracy. Scribe v2 comes within 0.2 points of MAI-Transcribe-2's error rate but runs at a fifth of its speed.
+MAI-Transcribe-2 leads overall because it places first on error rate, second on speed, and fourth on price. Parakeet runs at 527×, ahead of every other eligible model, but ranks near the bottom on accuracy. Scribe v2 comes within 0.2 points of MAI-Transcribe-2's error rate but runs at a fifth of its speed.
 
 Whisper Large v3 Turbo stays the default as the value pick. OpenRouter also routes it to DeepInfra at $0.20, which the leaderboard hasn't benchmarked. Switching away from Whisper drops `vocabulary`, since OpenRouter passes the prompt only to Groq and DeepInfra.
 
