@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 
 use anyhow::{Result, bail};
 
@@ -35,6 +35,29 @@ impl PressLatch {
 
     pub fn release(&mut self) {
         self.down = false;
+    }
+}
+
+impl fmt::Display for Hotkey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (held, name) in [
+            (self.control, "Ctrl"),
+            (self.alt, "Alt"),
+            (self.shift, "Shift"),
+            (self.command, "Cmd"),
+        ] {
+            if held {
+                write!(formatter, "{name}+")?;
+            }
+        }
+        match self.key {
+            Key::Letter(letter) => write!(formatter, "{}", char::from(letter)),
+            Key::Digit(digit) => write!(formatter, "{digit}"),
+            Key::Space => formatter.write_str("Space"),
+            Key::Escape => formatter.write_str("Escape"),
+            Key::Backspace => formatter.write_str("Backspace"),
+            Key::Function(number) => write!(formatter, "F{number}"),
+        }
     }
 }
 

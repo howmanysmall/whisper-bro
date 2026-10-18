@@ -1,6 +1,8 @@
 mod accessibility;
 mod clipboard;
 mod hotkeys;
+mod hud;
+mod permissions;
 
 use std::{
     path::Path,
@@ -8,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use core_foundation::base::CFType;
 use objc2::{
     DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send,
@@ -17,8 +19,9 @@ use objc2::{
     sel,
 };
 use objc2_app_kit::{
-    NSAlert, NSApplication, NSApplicationActivationPolicy, NSEventMask, NSMenu, NSMenuItem,
-    NSSound, NSStatusBar, NSStatusItem, NSVariableStatusItemLength, NSWorkspace,
+    NSAlert, NSApplication, NSApplicationActivationPolicy, NSColor, NSEventMask, NSImage,
+    NSImageSymbolConfiguration, NSMenu, NSMenuItem, NSSound, NSSquareStatusItemLength, NSStatusBar,
+    NSStatusItem, NSWorkspace,
 };
 use objc2_foundation::{NSDate, NSDefaultRunLoopMode, NSObject, NSObjectProtocol, NSString};
 
@@ -62,6 +65,7 @@ pub struct Desktop {
     copy: Retained<NSMenuItem>,
     _target: Retained<MenuTarget>,
     keys: hotkeys::Hotkeys,
+    hud: hud::Hud,
     receiver: Receiver<Command>,
 }
 
@@ -77,6 +81,11 @@ impl Desktop {
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         app.finishLaunching();
+        if let Some(message) = permissions::input_switch_conflict(shortcut) {
+            bail!(message);
+        }
+        accessibility::prompt();
+        permissions::prompt_microphone();
         let (sender, receiver) = mpsc::channel();
         let keys = hotkeys::Hotkeys::new(shortcut, sender.clone())?;
         let target: Retained<MenuTarget> = unsafe {
@@ -99,11 +108,15 @@ impl Desktop {
         menu.addItem(&copy);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         menu.addItem(&menu_item(mtm, &target, "Quit Yap", sel!(quit:)));
-        let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
+        let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSSquareStatusItemLength);
         item.setMenu(Some(&menu));
         if let Some(button) = item.button(mtm) {
-            button.setTitle(&NSString::from_str("◉"));
+            match status_image(Status::Idle) {
+                Some(image) => button.setImage(Some(&image)),
+                None => button.setTitle(&NSString::from_str(status_title(Status::Idle))),
+            }
         }
+        let hud = hud::Hud::new(mtm, item.clone());
         Ok(Self {
             app,
             item,
@@ -112,6 +125,7 @@ impl Desktop {
             copy,
             _target: target,
             keys,
+            hud,
             receiver,
         })
     }
@@ -130,6 +144,7 @@ impl Desktop {
             if let Some(event) = event {
                 self.app.sendEvent(&event);
             }
+            self.hud.tick();
             Ok(self.receiver.try_iter().collect())
         })
     }
@@ -152,21 +167,33 @@ impl Desktop {
         if let Some(mtm) = MainThreadMarker::new()
             && let Some(button) = self.item.button(mtm)
         {
-            button.setTitle(&NSString::from_str(match status {
-                Status::Idle => "◉",
-                Status::Recording => "● REC",
-                Status::Processing => "…",
-                Status::Error => "!",
-            }));
+            match status_image(status) {
+                Some(image) => {
+                    button.setTitle(&NSString::from_str(""));
+                    button.setImage(Some(&image));
+                }
+                None => {
+                    button.setImage(None);
+                    button.setTitle(&NSString::from_str(status_title(status)));
+                }
+            }
             button.setToolTip(Some(&NSString::from_str(text)));
+        }
+        match status {
+            Status::Recording | Status::Processing => self.hud.show(text, None),
+            Status::Idle => self.hud.show(text, Some(Duration::from_millis(1500))),
+            // `notify` follows every error and shows it for longer.
+            Status::Error => {}
         }
     }
 
     pub fn notify(&mut self, message: &str) {
         self.label.setTitle(&NSString::from_str(message));
+        self.hud.show(message, Some(Duration::from_secs(5)));
     }
 
     pub fn target(&self) -> Result<Target> {
+        permissions::microphone()?;
         let application = NSWorkspace::sharedWorkspace()
             .frontmostApplication()
             .context("No foreground application")?;
@@ -204,6 +231,40 @@ impl Drop for Desktop {
         if MainThreadMarker::new().is_some() {
             NSStatusBar::systemStatusBar().removeStatusItem(&self.item);
         }
+    }
+}
+
+fn status_image(status: Status) -> Option<Retained<NSImage>> {
+    let (name, description) = match status {
+        Status::Idle => ("mic", "Yap"),
+        Status::Recording => ("mic.fill", "Yap is recording"),
+        Status::Processing => ("ellipsis.circle", "Yap is transcribing"),
+        Status::Error => ("exclamationmark.triangle.fill", "Yap error"),
+    };
+    let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+        &NSString::from_str(name),
+        Some(&NSString::from_str(description)),
+    )?;
+    if matches!(status, Status::Recording | Status::Error) {
+        let red = NSImageSymbolConfiguration::configurationWithHierarchicalColor(
+            &NSColor::systemRedColor(),
+        );
+        let image = image.imageWithSymbolConfiguration(&red)?;
+        image.setTemplate(false);
+        Some(image)
+    } else {
+        image.setTemplate(true);
+        Some(image)
+    }
+}
+
+/// Text shown when SF Symbols are unavailable.
+fn status_title(status: Status) -> &'static str {
+    match status {
+        Status::Idle => "◉",
+        Status::Recording => "● REC",
+        Status::Processing => "…",
+        Status::Error => "!",
     }
 }
 
@@ -256,12 +317,13 @@ pub fn startup_error(message: &str) {
 
 pub fn permission_status() -> String {
     format!(
-        "Accessibility: {}. Microphone permission is checked by macOS when recording starts.",
+        "Accessibility: {}. Microphone: {}.",
         if accessibility::trusted() {
             "granted"
         } else {
             "not granted"
-        }
+        },
+        permissions::microphone_label()
     )
 }
 

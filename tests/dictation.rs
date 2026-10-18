@@ -78,6 +78,20 @@ fn invalid_shortcuts_and_misspelled_configuration_are_rejected() {
 }
 
 #[test]
+fn shortcuts_print_in_the_spelling_users_write_in_config() {
+    for (written, shown) in [
+        ("control+option+space", "Ctrl+Alt+Space"),
+        ("cmd+shift+k", "Shift+Cmd+K"),
+        ("F5", "F5"),
+        ("Ctrl+7", "Ctrl+7"),
+    ] {
+        let hotkey: Hotkey = written.parse().unwrap();
+        assert_eq!(hotkey.to_string(), shown);
+        assert_eq!(shown.parse::<Hotkey>().unwrap(), hotkey);
+    }
+}
+
+#[test]
 fn holding_the_shortcut_cannot_toggle_recording_on_and_off_due_to_key_repeat() {
     let mut key = yap::hotkey::PressLatch::default();
     assert!(key.press());

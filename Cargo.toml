@@ -35,10 +35,21 @@ zeroize = "1"
 tokio = { version = "1", features = ["net", "test-util"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
 core-foundation = "0.10"
 objc2 = "0.6"
 objc2-app-kit = "0.3"
+objc2-av-foundation = {
+	version = "0.3",
+	default-features = false,
+	features = ["AVCaptureDevice", "AVMediaFormat", "block2", "std"]
+}
 objc2-foundation = "0.3"
+objc2-quartz-core = {
+	version = "0.3",
+	default-features = false,
+	features = ["CALayer", "objc2-core-foundation", "std"]
+}
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = {
