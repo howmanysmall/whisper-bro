@@ -86,7 +86,9 @@ jobs:
             delimiter="notes-$(openssl rand -hex 16)"
             {
               echo "notes<<$delimiter"
-              cat "$notes"
+              # communique may leave off the trailing newline, which would glue
+              # the delimiter onto the last line of the notes.
+              printf '%s\n' "$(< "$notes")"
               echo "$delimiter"
             } >> "$GITHUB_OUTPUT"
           else
