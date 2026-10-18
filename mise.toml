@@ -82,3 +82,33 @@ description = "Preview a release without committing, tagging, or pushing (same a
 usage = 'arg "[level]" default="release" help="patch, minor, major, release, or an explicit X.Y.Z"'
 tools = { "github:crate-ci/cargo-release" = "1.1.6" }
 run = "cargo release {{usage.level}}"
+
+[tasks.amend]
+description = "Amends the staged changes, reusing the previous commit message."
+run = "git commit --amend --reuse-message=HEAD --signoff --no-verify"
+
+[tasks."amend:verify"]
+description = "Amends the staged changes, reusing the previous commit message."
+run = "git commit --amend --reuse-message=HEAD --signoff"
+
+[tasks.commit]
+description = "Commits the staged changes."
+usage = """
+arg <message> {
+	help "Git commit message"
+}
+"""
+run = """
+git commit --signoff --message "${usage_message?}"
+"""
+
+[tasks."commit:no-verify"]
+description = "Commits the staged changes without running Git hooks."
+usage = """
+arg <message> {
+	help "Git commit message"
+}
+"""
+run = """
+git commit --signoff --message "${usage_message?}" --no-verify
+"""
