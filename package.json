@@ -18,7 +18,8 @@
 		"commitlint": "commitlint",
 		"oxfmt": "oxfmt",
 		"release": "bumpp",
-		"skills": "skills"
+		"skills": "skills",
+		"tsc": "tsc"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "catalog:lint",
