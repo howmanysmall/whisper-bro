@@ -1,18 +1,18 @@
 {
 	"name": "whisper-bro",
 	"version": "0.0.0",
-	"description": "A dumb speech to text app.",
-	"license": "MIT",
-	"author": "HowManySmall",
-	"type": "module",
 	"private": true,
+	"description": "A dumb speech to text app.",
 	"bugs": {
 		"url": "https://github.com/howmanysmall/whisper-bro/issues"
 	},
+	"license": "MIT",
+	"author": "HowManySmall",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/howmanysmall/whisper-bro.git"
 	},
+	"type": "module",
 	"scripts": {
 		"biome": "biome",
 		"commitlint": "commitlint",
