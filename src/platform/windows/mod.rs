@@ -70,7 +70,7 @@ impl Desktop {
             let class = WNDCLASSW {
                 lpfnWndProc: Some(window_proc),
                 hInstance: instance,
-                lpszClassName: w!("WhisperBro"),
+                lpszClassName: w!("Yap"),
                 ..Default::default()
             };
             ensure!(
@@ -79,8 +79,8 @@ impl Desktop {
             );
             let window = CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
-                w!("WhisperBro"),
-                w!("Whisper Bro"),
+                w!("Yap"),
+                w!("Yap"),
                 WINDOW_STYLE::default(),
                 0,
                 0,
@@ -140,7 +140,7 @@ impl Desktop {
                 };
             RegisterHotKey(Some(window), TALK_ID, modifiers, key_code(shortcut.key))
                 .context("Shortcut is already in use. Change shortcut in config.toml")?;
-            wide_into("Whisper Bro", &mut desktop.icon.szTip);
+            wide_into("Yap", &mut desktop.icon.szTip);
             ensure!(
                 Shell_NotifyIconW(NIM_ADD, &desktop.icon).as_bool(),
                 "Could not create the tray icon"
@@ -210,10 +210,7 @@ impl Desktop {
             Status::Processing => "Finishing",
             Status::Error => "Error",
         };
-        wide_into(
-            &format!("Whisper Bro · {label}\n{text}"),
-            &mut self.icon.szTip,
-        );
+        wide_into(&format!("Yap · {label}\n{text}"), &mut self.icon.szTip);
         unsafe {
             let _ = Shell_NotifyIconW(NIM_MODIFY, &self.icon);
         }
@@ -223,7 +220,7 @@ impl Desktop {
         let mut notification = self.icon;
         notification.uFlags = NIF_INFO;
         notification.dwInfoFlags = NIIF_WARNING;
-        wide_into("Whisper Bro", &mut notification.szInfoTitle);
+        wide_into("Yap", &mut notification.szInfoTitle);
         wide_into(message, &mut notification.szInfo);
         unsafe {
             let _ = Shell_NotifyIconW(NIM_MODIFY, &notification);
@@ -342,7 +339,7 @@ fn popup(window: HWND) -> Result<Option<Command>> {
             AppendMenuW(menu, MF_STRING, 2, w!("Cancel dictation"))?;
             AppendMenuW(menu, MF_STRING, 3, w!("Copy last dictation"))?;
             AppendMenuW(menu, MF_SEPARATOR, 0, None)?;
-            AppendMenuW(menu, MF_STRING, 4, w!("Quit Whisper Bro"))?;
+            AppendMenuW(menu, MF_STRING, 4, w!("Quit Yap"))?;
             let mut position = POINT::default();
             GetCursorPos(&mut position)?;
             let _ = SetForegroundWindow(window);
@@ -421,7 +418,7 @@ pub fn startup_error(message: &str) {
         MessageBoxW(
             None,
             PCWSTR(message.as_ptr()),
-            w!("Whisper Bro couldn't start"),
+            w!("Yap couldn't start"),
             MB_OK | MB_ICONERROR,
         );
     }
@@ -459,9 +456,9 @@ pub fn autostart(enabled: bool, config: &Path) -> Result<()> {
                 .chain(Some(0))
                 .flat_map(u16::to_le_bytes)
                 .collect();
-            RegSetValueExW(key, w!("Whisper Bro"), None, REG_SZ, Some(&bytes)).ok()
+            RegSetValueExW(key, w!("Yap"), None, REG_SZ, Some(&bytes)).ok()
         } else {
-            let error = RegDeleteValueW(key, w!("Whisper Bro"));
+            let error = RegDeleteValueW(key, w!("Yap"));
             if error == ERROR_FILE_NOT_FOUND {
                 Ok(())
             } else {

@@ -8,7 +8,7 @@ use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{Message, protocol::Role},
 };
-use whisper_bro::{audio::Encoder, config::Config, hotkey::Hotkey, speech, storage::Dictation};
+use yap::{audio::Encoder, config::Config, hotkey::Hotkey, speech, storage::Dictation};
 
 async fn pair() -> (
     WebSocketStream<tokio::io::DuplexStream>,
@@ -269,7 +269,7 @@ fn invalid_shortcuts_and_misspelled_configuration_are_rejected() {
 
 #[test]
 fn holding_the_shortcut_cannot_toggle_recording_on_and_off_due_to_key_repeat() {
-    let mut key = whisper_bro::hotkey::PressLatch::default();
+    let mut key = yap::hotkey::PressLatch::default();
     assert!(key.press());
     assert!(!key.press());
     assert!(!key.press());

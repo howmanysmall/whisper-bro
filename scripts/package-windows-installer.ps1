@@ -8,7 +8,7 @@ if (-not $versionLine) { throw 'Could not read the package version from Cargo.to
 $version = $versionLine.Matches[0].Groups[1].Value
 
 $target = if ($env:CARGO_BUILD_TARGET) { "target/$env:CARGO_BUILD_TARGET" } else { 'target' }
-$binary = [System.IO.Path]::GetFullPath((Join-Path $root "$target/release/whisper-bro.exe"))
+$binary = [System.IO.Path]::GetFullPath((Join-Path $root "$target/release/yap.exe"))
 if (-not (Test-Path $binary)) { throw "Missing $binary. Build it with mise run build first." }
 
 $iscc = $null
@@ -25,4 +25,4 @@ if ($command) {
 
 & $iscc (Join-Path $root 'packaging/windows.iss') "/DAppVersion=$version" "/DAppBinary=$binary"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-Write-Output "Packaged $(Join-Path $root 'dist\whisper-bro-windows-x64-setup.exe')"
+Write-Output "Packaged $(Join-Path $root 'dist\yap-windows-x64-setup.exe')"

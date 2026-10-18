@@ -1,4 +1,4 @@
-# Whisper Bro
+# Yap
 
 I wanted voice typing for a coworker who uses long spoken prompts, including in apps that don't have a microphone button. This is a small background utility inspired by [Wispr Flow](https://wisprflow.ai/): press a shortcut, talk, and insert the finished text where you were typing.
 
@@ -19,13 +19,13 @@ Get a key from [OpenRouter](https://openrouter.ai/settings/keys). Setup stores i
 
 Click a text field, press **Ctrl+Alt+Space**, speak, then press the same shortcut again. **Escape** cancels recording or transcription. The tray/menu-bar menu has recording controls, recovery, and Quit. Leave the destination focused while the result finishes. If focus changes, recover it using **Copy last dictation**.
 
-On macOS, use the packaged app for a stable permission identity. Grant Microphone and Accessibility access to Whisper Bro in **System Settings → Privacy & Security**. Development runs may attribute permissions to the terminal instead. Restart after changing Accessibility permission.
+On macOS, use the packaged app for a stable permission identity. Grant Microphone and Accessibility access to Yap in **System Settings → Privacy & Security**. Development runs may attribute permissions to the terminal instead. Restart after changing Accessibility permission.
 
 On Windows, enable microphone access for desktop apps. Normal desktop apps can't type into an elevated app. In that case, recover the text from the tray and paste it yourself.
 
 ## Configure it
 
-`whisper-bro config` prints the configuration path and effective settings. Edit that TOML file and restart the utility:
+`yap config` prints the configuration path and effective settings. Edit that TOML file and restart the utility:
 
 ```toml
 shortcut = "Ctrl+Alt+Space"
@@ -46,7 +46,7 @@ timeout_ms = 1200
 
 `toggle` mode is the default because holding a key through a long prompt gets old. `hold` records from press to release. The shortcut accepts Ctrl, Alt, Shift, Cmd/Win, letters, digits, Space, Backspace, and F1 to F12. Letter shortcuts refer to physical US-layout key positions on macOS.
 
-Use `whisper-bro devices` to get microphone names. Leaving `microphone` unset follows the system default at the beginning of each recording. A disconnected or stalled device stops that recording. Reconnect it and start another. Recording stops on its own after `max_recording_seconds`.
+Use `yap devices` to get microphone names. Leaving `microphone` unset follows the system default at the beginning of each recording. A disconnected or stalled device stops that recording. Reconnect it and start another. Recording stops on its own after `max_recording_seconds`.
 
 `transcription_model` accepts any OpenRouter audio transcription model. `transcription_timeout_ms` limits how long the upload and transcription may take, from 1000 to 120000.
 
@@ -97,16 +97,16 @@ Some models fall outside the rules. Alibaba's Fun-Realtime-ASR-preview has the l
 Other commands:
 
 ```sh
-whisper-bro doctor
-whisper-bro last
-whisper-bro last --raw
-whisper-bro last --copy
-whisper-bro autostart enable
-whisper-bro autostart disable
-whisper-bro --config /path/to/config.toml run
+yap doctor
+yap last
+yap last --raw
+yap last --copy
+yap autostart enable
+yap autostart disable
+yap --config /path/to/config.toml run
 ```
 
-Use the installed executable when enabling login startup, so moving a development build doesn't break the saved path. On macOS, that's `/Applications/Whisper Bro.app/Contents/MacOS/whisper-bro`.
+Use the installed executable when enabling login startup, so moving a development build doesn't break the saved path. On macOS, that's `/Applications/Yap.app/Contents/MacOS/yap`.
 
 ## Recover a result
 
@@ -149,7 +149,7 @@ The argument is `patch`, `minor`, `major`, or an explicit version like `0.2.0`. 
 
 That tag starts the release workflow. It reruns CI and publishes every package in a GitHub release with `SHA256SUMS.txt`. While CI runs, [communique](https://github.com/jdx/communique) writes the release notes from the commits since the last tag, using `communique.toml` and the `OPENROUTER_API_KEY` repository secret. If that fails, the release falls back to GitHub's generated notes, and the run's `release-notes-review` artifact lists which commits the notes covered. A tag like `v0.2.0-rc.1` publishes as a prerelease. The workflow creates the release only after every build succeeds. A red build doesn't publish anything and leaves a tag to retry from. Re-running the workflow retries the upload, and the workflow refuses a tag that disagrees with `Cargo.toml`. If the tag itself is wrong, delete it with `git push origin :refs/tags/vX.Y.Z` and run the release command again.
 
-The downloads are `Whisper Bro.app` for Apple Silicon and Intel, `whisper-bro-windows-x64-setup.exe`, and `whisper-bro-windows-x64-portable.zip`. None of them carry a real signature yet. macOS bundles only have an ad-hoc signature, so open the app with right-click → **Open** the first time. On Windows, SmartScreen blocks the installer until you choose "More info → Run anyway."
+The downloads are `Yap.app` for Apple Silicon and Intel, `yap-windows-x64-setup.exe`, and `yap-windows-x64-portable.zip`. None of them carry a real signature yet. macOS bundles only have an ad-hoc signature, so open the app with right-click → **Open** the first time. On Windows, SmartScreen blocks the installer until you choose "More info → Run anyway."
 
 ## Measure the part that matters
 
@@ -158,10 +158,10 @@ The useful number is the time between stopping and having text in the destinatio
 For repeatable provider checks, use the same WAV recordings:
 
 ```sh
-whisper-bro transcribe --realtime prompt.wav
-whisper-bro transcribe --realtime --no-cleanup prompt.wav
+yap transcribe --realtime prompt.wav
+yap transcribe --realtime --no-cleanup prompt.wav
 ```
 
-Text goes to stdout, and timings go to stderr. `finalize` is the upload and transcription time, and `stop_to_result` adds cleanup. `connect` always reads `0ms`, because there is no streaming connection any more. Normal dictation writes microphone-ready and stop-to-paste timings to `whisper-bro.log` in the directory reported by `doctor`.
+Text goes to stdout, and timings go to stderr. `finalize` is the upload and transcription time, and `stop_to_result` adds cleanup. `connect` always reads `0ms`, because there is no streaming connection any more. Normal dictation writes microphone-ready and stop-to-paste timings to `yap.log` in the directory reported by `doctor`.
 
 The first targets are 150 ms to recording-ready feedback and 1 second median from stop to paste. The p95 target is 2 seconds. Both paste targets apply to dictations of 5 to 60 seconds on a stable connection. Nobody has measured them yet, and they date from the streaming design, so the upload design may need new ones. Check T3 Chat, Discord, and a code editor on both operating systems with short sentences, technical names, spoken corrections, multi-minute prompts, focus changes, network loss, and headset reconnects. Include cold connections and Bluetooth microphone startup in the measurements.

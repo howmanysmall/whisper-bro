@@ -16,7 +16,7 @@ pub struct Paths {
 
 impl Paths {
     pub fn discover(config: Option<PathBuf>) -> Result<Self> {
-        let dirs = ProjectDirs::from("dev", "whisper-bro", "whisper-bro")
+        let dirs = ProjectDirs::from("dev", "yap", "yap")
             .context("Cannot locate the user configuration directory")?;
         Ok(Self {
             config: config.unwrap_or_else(|| dirs.config_dir().join("config.toml")),

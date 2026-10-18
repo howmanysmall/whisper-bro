@@ -9,7 +9,7 @@ pub use macos::*;
 pub use windows::*;
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-compile_error!("whisper-bro currently supports Windows and macOS");
+compile_error!("yap currently supports Windows and macOS");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {

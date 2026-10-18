@@ -88,7 +88,7 @@ impl Desktop {
         let menu = NSMenu::new(mtm);
         menu.setAutoenablesItems(false);
         let label = NSMenuItem::new(mtm);
-        label.setTitle(&NSString::from_str("Whisper Bro"));
+        label.setTitle(&NSString::from_str("Yap"));
         label.setEnabled(false);
         menu.addItem(&label);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
@@ -98,7 +98,7 @@ impl Desktop {
         let copy = menu_item(mtm, &target, "Copy last dictation", sel!(copyLast:));
         menu.addItem(&copy);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
-        menu.addItem(&menu_item(mtm, &target, "Quit Whisper Bro", sel!(quit:)));
+        menu.addItem(&menu_item(mtm, &target, "Quit Yap", sel!(quit:)));
         let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
         item.setMenu(Some(&menu));
         if let Some(button) = item.button(mtm) {
@@ -247,7 +247,7 @@ pub fn startup_error(message: &str) {
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         let alert = NSAlert::new(mtm);
-        alert.setMessageText(&NSString::from_str("Whisper Bro couldn't start"));
+        alert.setMessageText(&NSString::from_str("Yap couldn't start"));
         alert.setInformativeText(&NSString::from_str(message));
         alert.runModal();
     }
@@ -266,7 +266,7 @@ pub fn permission_status() -> String {
 
 pub fn autostart(enabled: bool, config: &Path) -> Result<()> {
     let home = std::env::var_os("HOME").context("HOME is not set")?;
-    let path = Path::new(&home).join("Library/LaunchAgents/dev.whisper-bro.plist");
+    let path = Path::new(&home).join("Library/LaunchAgents/dev.yap.plist");
     if !enabled {
         match std::fs::remove_file(path) {
             Ok(()) => return Ok(()),
@@ -280,7 +280,7 @@ pub fn autostart(enabled: bool, config: &Path) -> Result<()> {
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>Label</key><string>dev.whisper-bro</string>
+<key>Label</key><string>dev.yap</string>
 <key>ProgramArguments</key><array><string>{}</string><string>--config</string><string>{}</string><string>run</string></array>
 <key>RunAtLoad</key><true/>
 <key>ProcessType</key><string>Interactive</string>

@@ -28,7 +28,7 @@ impl Capture {
                 .input_devices()?
                 .find(|d| d.name().is_ok_and(|n| n == name))
                 .with_context(|| {
-                    format!("Microphone '{name}' is unavailable. Run `whisper-bro devices`")
+                    format!("Microphone '{name}' is unavailable. Run `yap devices`")
                 })?,
             None => host
                 .default_input_device()

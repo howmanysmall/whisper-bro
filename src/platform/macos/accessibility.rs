@@ -44,7 +44,7 @@ pub fn focused(pid: i32) -> Result<CFType> {
     }
     ensure!(
         trusted(),
-        "Enable Accessibility for Whisper Bro in System Settings → Privacy & Security → Accessibility, then restart it"
+        "Enable Accessibility for Yap in System Settings → Privacy & Security → Accessibility, then restart it"
     );
     let pointer = unsafe { AXUIElementCreateApplication(pid) };
     ensure!(!pointer.is_null(), "Could not inspect the foreground app");

@@ -4,7 +4,7 @@ import { exec } from "tinyexec";
 
 const CARGO_MANIFEST = "Cargo.toml";
 const CARGO_LOCKFILE = "Cargo.lock";
-const PACKAGE_NAME = "whisper-bro";
+const PACKAGE_NAME = "yap";
 const RELEASE_BRANCH = "main";
 
 // Matches the `version` key of the [package] table, stopping at the next table.

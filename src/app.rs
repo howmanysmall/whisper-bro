@@ -54,7 +54,7 @@ pub fn run(config: Config, paths: Paths, credentials: Credentials) -> Result<()>
         .truncate(false)
         .write(true)
         .open(paths.data.join("instance.lock"))?;
-    fs2::FileExt::try_lock_exclusive(&lock).context("Whisper Bro is already running")?;
+    fs2::FileExt::try_lock_exclusive(&lock).context("Yap is already running")?;
     let runtime = runtime()?;
     let mut desktop = Desktop::new(&config.shortcut.parse()?)?;
     let client = reqwest::Client::builder()

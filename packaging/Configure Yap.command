@@ -1,8 +1,8 @@
 #!/bin/bash
 cd "$(dirname "$0")" || exit 1
-binary="./Whisper Bro.app/Contents/MacOS/whisper-bro"
+binary="./Yap.app/Contents/MacOS/yap"
 if [[ ! -x "$binary" ]]; then
-	binary="/Applications/Whisper Bro.app/Contents/MacOS/whisper-bro"
+	binary="/Applications/Yap.app/Contents/MacOS/yap"
 fi
 "$binary" setup
 result=$?
