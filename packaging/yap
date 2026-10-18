@@ -1,0 +1,6 @@
+#!/bin/bash
+# Puts `yap` on PATH for tools that install the release archive, such as mise,
+# while still running the binary inside Yap.app so macOS permissions stay tied
+# to the bundle.
+here="$(dirname "$(realpath "$0")")"
+exec "$here/../Yap.app/Contents/MacOS/yap" "$@"

@@ -32,5 +32,10 @@ if [[ -n "${APPLE_NOTARY_PROFILE:-}" ]]; then
 fi
 cp "$root/packaging/Configure Yap.command" "$root/dist/$target/Configure Yap.command"
 chmod +x "$root/dist/$target/Configure Yap.command"
+# Without bin/, mise would put the archive root on PATH because Configure
+# Yap.command is executable, and never look inside Yap.app.
+mkdir -p "$root/dist/$target/bin"
+cp "$root/packaging/yap" "$root/dist/$target/bin/yap"
+chmod +x "$root/dist/$target/bin/yap"
 ditto -c -k --norsrc "$root/dist/$target" "$archive"
 printf 'Packaged %s\n' "$archive"
