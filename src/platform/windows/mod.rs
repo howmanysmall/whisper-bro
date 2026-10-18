@@ -443,6 +443,13 @@ pub fn autostart(enabled: bool, config: &Path) -> Result<()> {
             None,
         )
         .ok()?;
+        let legacy = RegDeleteValueW(key, w!("Whisper Bro"));
+        if legacy != ERROR_FILE_NOT_FOUND
+            && let Err(error) = legacy.ok()
+        {
+            let _ = RegCloseKey(key);
+            return Err(error.into());
+        }
         let result = if enabled {
             let executable = std::env::current_exe()?;
             let config = std::path::absolute(config)?;
