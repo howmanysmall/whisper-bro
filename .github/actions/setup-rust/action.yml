@@ -8,15 +8,18 @@ inputs:
   cache-key:
     description: Names this job's build cache, so jobs that build differently don't share one.
     required: true
+  cache:
+    description: Whether to restore and save build caches, as "true" or "false".
+    default: "true"
 
 runs:
   using: composite
   steps:
-    - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+    - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
       with:
         # mise.toml enables mr_boxington on rust, which requires mbx installed.
         install_args: rust mr-boxington
-        cache: ${{ github.ref_type != 'tag' }}
+        cache: ${{ inputs.cache == 'true' && github.ref_type != 'tag' }}
 
     # A no-op for the runner's own target; needed to cross-compile.
     - shell: bash
@@ -26,7 +29,7 @@ runs:
 
     # Releases build from scratch rather than from a cache a pull request could
     # have written.
-    - if: github.ref_type != 'tag'
+    - if: inputs.cache == 'true' && github.ref_type != 'tag'
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
         shared-key: ${{ inputs.cache-key }}-${{ inputs.target }}

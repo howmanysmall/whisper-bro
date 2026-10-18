@@ -6,6 +6,15 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      ref:
+        description: Ref to check out. Empty means the ref that triggered the run.
+        type: string
+        default: ""
+      release:
+        description: Whether this run gates a release, which must not use build caches.
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -42,6 +51,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref || github.ref }}
           # commitlint and betterleaks read the full history.
           fetch-depth: 0
           persist-credentials: false
@@ -51,7 +61,7 @@ jobs:
           install_args: >-
             betterleaks cargo-deny hk jactionlint mr-boxington node pinact pkl pnpm rumdl rust
             shellcheck shfmt tombi
-          cache: ${{ github.ref_type != 'tag' }}
+          cache: ${{ github.ref_type != 'tag' && !inputs.release }}
 
       # The history scan needs no Node packages, so it runs during the install.
       - id: install-packages
@@ -101,10 +111,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
 
       - uses: ./.github/actions/setup-rust
         with:
+          cache: ${{ github.ref_type != 'tag' && !inputs.release }}
           target: ${{ matrix.target }}
           cache-key: test
 
@@ -139,10 +151,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
 
       - uses: ./.github/actions/setup-rust
         with:
+          cache: ${{ github.ref_type != 'tag' && !inputs.release }}
           target: ${{ matrix.target }}
           cache-key: package
 
