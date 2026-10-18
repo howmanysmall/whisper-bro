@@ -1,6 +1,6 @@
 {
 	"name": "whisper-bro",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"private": true,
 	"description": "A dumb speech to text app.",
 	"bugs": {
@@ -30,6 +30,7 @@
 		"bumpp": "catalog:tooling",
 		"oxfmt": "catalog:lint",
 		"skills": "catalog:tooling",
+		"tinyexec": "catalog:scripts",
 		"typescript": "catalog:tooling"
 	},
 	"packageManager": "pnpm@12.14.0"
