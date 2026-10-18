@@ -35,4 +35,5 @@ pub enum Cue {
     Stop,
     Done,
     Error,
+    Warning,
 }

@@ -233,6 +233,7 @@ pub fn cue(cue: Cue) {
         Cue::Stop => "Pop",
         Cue::Done => "Glass",
         Cue::Error => "Basso",
+        Cue::Warning => "Funk",
     };
     if let Some(sound) = NSSound::soundNamed(&NSString::from_str(name)) {
         sound.play();
