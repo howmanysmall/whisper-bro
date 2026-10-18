@@ -10,7 +10,7 @@ license = "MIT"
 anyhow = "1"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
-cpal = "0.16"
+cpal = "0.18"
 directories = "6"
 fs2 = "0.4"
 futures-util = { version = "0.3", features = ["sink"] }
