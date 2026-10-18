@@ -210,10 +210,7 @@ impl Desktop {
             Status::Processing => "Finishing",
             Status::Error => "Error",
         };
-        wide_into(
-            &format!("Yap · {label}\n{text}"),
-            &mut self.icon.szTip,
-        );
+        wide_into(&format!("Yap · {label}\n{text}"), &mut self.icon.szTip);
         unsafe {
             let _ = Shell_NotifyIconW(NIM_MODIFY, &self.icon);
         }
