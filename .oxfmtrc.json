@@ -15,8 +15,7 @@
 		"**/generated/**",
 		"**/ses_*.json",
 		".mise/**",
-		".tsbuildinfo*",
-		"tests/fixtures/**/{invalid-*,*-invalid}/**/*.json"
+		".tsbuildinfo*"
 	],
 	"insertFinalNewline": true,
 	"jsdoc": false,
@@ -43,54 +42,12 @@
 	"singleAttributePerLine": false,
 	"singleQuote": false,
 	"sortImports": {
-		"customGroups": [
-			{
-				"elementNamePattern": [
-					"react",
-					"react-dom",
-					"react-**",
-					"next",
-					"next/**",
-					"vue",
-					"vue-**",
-					"@vue/**",
-					"svelte",
-					"svelte/**",
-					"@sveltejs/**",
-					"solid-js",
-					"@solidjs/**"
-				],
-				"groupName": "framework",
-				"modifiers": ["value"],
-				"selector": "external"
-			},
-			{
-				"elementNamePattern": [
-					"vitest",
-					"@vitest/**",
-					"jest",
-					"@jest/**",
-					"@testing-library/**",
-					"msw",
-					"msw/**",
-					"playwright",
-					"@playwright/**",
-					"cypress",
-					"@cypress/**"
-				],
-				"groupName": "testing",
-				"modifiers": ["value"],
-				"selector": "external"
-			}
-		],
 		"groups": [
 			"side_effect",
 			"side_effect_style",
 			{ "newlinesBetween": true },
 
 			"value-builtin",
-			"framework",
-			"testing",
 			"value-external",
 			{ "newlinesBetween": true },
 
@@ -126,7 +83,6 @@
 	"sortPackageJson": {
 		"sortScripts": true
 	},
-	"sortTailwindcss": true,
 	"tabWidth": 4,
 	"trailingComma": "all",
 	"useTabs": true

@@ -45,35 +45,10 @@ catalogs:
   types:
     "@types/node": ^26.6.5
 
-packageExtensions:
-  "@stryker-mutator/core@10.0.0":
-    dependencies:
-      "@stryker-mutator/vitest-runner": 10.0.0
-      typescript: 5.9.3
-  astro@7.4.0:
-    peerDependencies:
-      "@astrojs/check": "*"
-      typescript: "*"
-    peerDependenciesMeta:
-      "@astrojs/check":
-        optional: true
-      typescript:
-        optional: true
-
-peerDependencyRules:
-  allowedVersions:
-    "@emnapi/core": ">=1.0.0"
-    "@emnapi/runtime": ">=1.0.0"
-    "@typescript-eslint/*>typescript": ">=6.0.0 <7.0.0"
-
 fetchRetries: 5
 fetchRetryMaxtimeout: 30000
 fetchRetryMintimeout: 1000
 fetchTimeout: 60000
-
-permissions:
-  fallow:
-    skills: true
 
 registries:
   "@jsr": https://npm.jsr.io

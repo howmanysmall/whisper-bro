@@ -1,6 +1,7 @@
 /target/
 /dist/
 mise.local.toml
+.zed/
 .env
 .DS_Store
 *.wav

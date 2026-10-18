@@ -4,7 +4,13 @@ version = "2.0.1"
 edition = "2024"
 rust-version = "1.98"
 description = "Shortcut-driven voice typing for Windows and macOS: record, transcribe through OpenRouter, paste."
+readme = "README.md"
+homepage = "https://github.com/howmanysmall/yap"
+repository = "https://github.com/howmanysmall/yap"
 license = "MIT"
+keywords = ["dictation", "openrouter", "speech-to-text", "voice-typing", "whisper"]
+categories = ["accessibility", "multimedia::audio"]
+publish = false
 
 [dependencies]
 anyhow = "1"

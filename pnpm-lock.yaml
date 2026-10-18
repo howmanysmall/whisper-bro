@@ -199,8 +199,6 @@ catalogs:
       specifier: ^26.6.5
       version: 26.6.5
 
-packageExtensionsChecksum: sha256-aNpmOV4UjOxsVpebXEKU3hZeM6/ZcxT1GpsATredD/M=
-
 importers:
 
   .:

@@ -73,7 +73,6 @@ mise-install = "mise install"
 
 [[pre-start]]
 deps = "mise exec -- nci"
-allow = "[ ! -f .envrc ] || mise exec -- direnv allow"
 
 [step.copy-ignored]
 exclude = ["node_modules/", ".cache/", "coverage/", "dist/"]

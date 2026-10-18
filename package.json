@@ -2,7 +2,7 @@
 	"name": "yap",
 	"version": "2.0.1",
 	"private": true,
-	"description": "A dumb speech to text app.",
+	"description": "Voice typing anywhere: press a shortcut, speak, and the transcript is pasted into the focused app.",
 	"bugs": {
 		"url": "https://github.com/howmanysmall/yap/issues"
 	},
