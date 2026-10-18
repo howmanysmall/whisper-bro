@@ -25,10 +25,10 @@
 		"@commitlint/cli": "catalog:commitlint",
 		"@commitlint/config-conventional": "catalog:commitlint",
 		"@commitlint/types": "catalog:commitlint",
-		"bumpp": "catalog:tooling",
 		"@types/node": "catalog:types",
-		"skills": "catalog:tooling",
+		"bumpp": "catalog:tooling",
 		"oxfmt": "catalog:lint",
+		"skills": "catalog:tooling",
 		"typescript": "catalog:tooling"
 	},
 	"packageManager": "pnpm@12.14.0"

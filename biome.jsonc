@@ -6,11 +6,11 @@
 				"noDuplicateClasses": "on",
 				"organizeImports": "off",
 				"preset": "recommended",
-				"useSortedAttributes": "off",
+				"useSortedAttributes": "on",
 				"useSortedEnumMembers": "on",
-				"useSortedInterfaceMembers": "off",
+				"useSortedInterfaceMembers": "on",
 				"useSortedKeys": {
-					"level": "off",
+					"level": "on",
 					"options": {
 						"groupByNesting": false,
 						"sortOrder": "lexicographic"
@@ -40,16 +40,7 @@
 	},
 
 	"files": {
-		"includes": [
-			"**",
-			"!**/package.json",
-			"!**/*.js",
-			"!**/*-lock.{json,yaml}",
-			"!scripts/clis/**/*.ts",
-			"!**/.opencode/goals",
-			"!src/generated/dictionary-verbs.ts",
-			"!.mise"
-		]
+		"includes": ["**", "!**/package.json", "!**/*-lock.{json,yaml}", "!**/.opencode/goals", "!.mise"]
 	},
 
 	"formatter": {
