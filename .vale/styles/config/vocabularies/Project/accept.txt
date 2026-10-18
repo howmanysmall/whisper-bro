@@ -1,0 +1,20 @@
+# React hooks, not the alex false positive.
+(?i)\bhooks?\b
+(?i)\bGod\b
+(?i)\bsimple\b
+# Product and format names in README.md.
+ChatGPT
+DeepInfra
+GPT
+OpenRouter
+SmartScreen
+(?i)TOML
+(?i)WAV
+Whisper Bro
+# Speech-to-text model names and metrics in README.md.
+ASR
+MAI
+TDT
+USD
+WER
+Best (?:performance|value|overall)
