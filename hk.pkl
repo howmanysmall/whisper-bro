@@ -1,0 +1,229 @@
+// hk configuration - https://hk.jdx.dev/
+amends "package://github.com/jdx/hk/releases/download/v2.7.0/hk@2.7.0#/Config.pkl"
+
+import "package://github.com/jdx/hk/releases/download/v2.7.0/hk@2.7.0#/Builtins.pkl"
+
+min_hk_version = "2.7.0"
+jobs = 2
+fail_fast = true
+
+env {
+  ["RAYON_NUM_THREADS"] = "2"
+}
+
+exclude =
+  List(
+    "node_modules",
+    "target",
+    "dist",
+    ".git",
+    ".mise",
+    ".agents/skills",
+  )
+
+local ECMA_FILES = List("**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}")
+local RUST_FILES = List("**/*.rs", "**/Cargo.toml", "Cargo.lock", ".cargo/config.toml")
+local MARKDOWN_FILES = List("**/*.{md,markdown}")
+local ACTION_FILES =
+  List(".github/workflows/**/*.{yml,yaml}", ".github/actions/**/action.{yml,yaml}")
+local JACTIONLINT_SARIF = List("jactionlint", "--online", "--format", "sarif", "{{files}}")
+local GENERATED_DATA = List("**/*-lock.{json,yaml}", "Cargo.lock", "mise.lock")
+
+local fileChecks = new Mapping<String, Step> {
+  ["cargo-fmt"] = Builtins.cargo_fmt
+  // Advisories, licenses, and sources from deny.toml. Runs only when the
+  // manifest, lockfile, or deny.toml changes.
+  ["cargo-deny"] = Builtins.cargo_deny
+  ["cargo-clippy"] = (Builtins.cargo_clippy) {
+    glob = RUST_FILES
+    depends = List("cargo-fmt")
+    exclusive = true
+    // Matches `mise run check`.
+    check = new CommandSpec {
+      command = new Command {
+        argv =
+          List("cargo", "clippy", "--locked", "--all-targets", "--quiet", "--", "-D", "warnings")
+      }
+      effect = "write"
+    }
+  }
+  ["type-check"] {
+    glob = ECMA_FILES + List("tsconfig*.json", "package.json")
+    check = new CommandSpec {
+      command = new Command {
+        argv = List("node", "--run", "tsc", "--", "--noEmit")
+      }
+      effect = "read"
+    }
+  }
+  ["biome"] = (Builtins.biome) {
+    glob = ECMA_FILES + List("**/*.{json,jsonc}")
+    exclude = GENERATED_DATA
+    batch = false
+  }
+  // Biome ignores package.json; oxfmt sorts it.
+  ["oxfmt"] = (Builtins.oxfmt) {
+    glob = List("**/package.json")
+  }
+  ["shellcheck"] = (Builtins.shellcheck) {
+    batch = false
+  }
+  ["shfmt"] = (Builtins.shfmt) {
+    batch = false
+    check_diff = (Builtins.shfmt.check_diff) {
+      command = new Command {
+        argv = List("shfmt", "-d", "--apply-ignore", "-bn", "-ci", "-sr", "{{files}}")
+      }
+    }
+    check_list_files = (Builtins.shfmt.check_list_files) {
+      command = new Command {
+        argv = List("shfmt", "-l", "--apply-ignore", "-bn", "-ci", "-sr", "{{files}}")
+      }
+    }
+    fix = (Builtins.shfmt.fix) {
+      command = new Command {
+        argv = List("shfmt", "-w", "--apply-ignore", "-bn", "-ci", "-sr", "{{files}}")
+      }
+    }
+  }
+  ["jactionlint"] = (Builtins.jactionlint) {
+    glob = ACTION_FILES + List(".github/dependabot.yml")
+    batch = false
+    diagnostic_format = "sarif"
+    check = (Builtins.jactionlint.check) {
+      command = new Command {
+        argv = JACTIONLINT_SARIF
+      }
+    }
+    check_diff = (Builtins.jactionlint.check) {
+      command = new Command {
+        argv = List("hk", "util", "sarif-diff", "--") + JACTIONLINT_SARIF
+      }
+    }
+    fix = new CommandSpec {
+      command = new Command {
+        argv = List("jactionlint", "--online", "--fix", "{{files}}")
+      }
+      effect = "write"
+    }
+  }
+  // pinact reads a GitHub token for its online checks, which only a shell can
+  // fetch.
+  ["pinact"] {
+    glob = ACTION_FILES
+    check = new CommandSpec {
+      command = "PINACT_GITHUB_TOKEN=\"$(gh auth token)\" pinact run --verify --check {{files}}"
+      effect = "read"
+    }
+    fix = new CommandSpec {
+      command = "PINACT_GITHUB_TOKEN=\"$(gh auth token)\" pinact run --verify {{files}}"
+      effect = "write"
+    }
+  }
+  // tombi validates .cargo/config.toml against the Cargo.toml schema, which
+  // rejects its [target] table.
+  ["tombi"] = (Builtins.tombi) {
+    exclude = GENERATED_DATA + List(".cargo/config.toml")
+  }
+  ["tombi-format"] = (Builtins.tombi_format) {
+    exclude = GENERATED_DATA
+  }
+  ["pkl-format"] = Builtins.pkl_format
+  ["rumdl"] = (Builtins.rumdl) {
+    glob = MARKDOWN_FILES
+  }
+  ["betterleaks"] {
+    check = new CommandSpec {
+      command = new Command {
+        argv =
+          List(
+            "betterleaks",
+            "git",
+            "--config",
+            ".betterleaks.toml",
+            "--pre-commit",
+            "--staged",
+            "--redact",
+            "--no-banner",
+          )
+      }
+      effect = "read"
+    }
+  }
+  ["merge-conflicts"] = Builtins.check_merge_conflict
+  ["case-conflicts"] = Builtins.check_case_conflict
+  ["symlinks"] = Builtins.check_symlinks
+  ["executable-shebangs"] = Builtins.check_executables_have_shebangs
+  ["private-keys"] = Builtins.detect_private_key
+  ["large-files"] = (Builtins.check_added_large_files) {
+    allow_binary = true
+    check = new CommandSpec {
+      command = new Command {
+        argv = List("hk", "util", "check-added-large-files", "--maxkb", "1024", "{{files}}")
+      }
+      effect = "read"
+    }
+  }
+  ["trailing-whitespace"] = (Builtins.trailing_whitespace) {
+    // rumdl preserves Markdown hard breaks while checking whitespace.
+    exclude = GENERATED_DATA + MARKDOWN_FILES
+  }
+  ["final-newline"] = (Builtins.newlines) {
+    exclude = GENERATED_DATA
+  }
+  // The Windows packaging scripts and .cmd launcher may need CRLF, so only
+  // flag files that mix both.
+  ["line-endings"] = (Builtins.mixed_line_ending) {
+    exclude = GENERATED_DATA
+  }
+  ["byte-order-marker"] = (Builtins.byte_order_marker) {
+    exclude = GENERATED_DATA
+  }
+}
+
+steps = fileChecks
+
+hooks {
+  ["pre-commit"] {
+    fix = true
+    stash = "git"
+    steps = fileChecks
+  }
+  ["commit-msg"] {
+    steps {
+      ["commitlint"] {
+        check = new CommandSpec {
+          command = new Command {
+            argv =
+              List(
+                "commitlint",
+                "--strict",
+                "--config",
+                "commitlint.config.ts",
+                "--edit",
+                "{{commit_msg_file}}",
+              )
+          }
+          effect = "read"
+        }
+      }
+    }
+  }
+  ["pre-push"] {
+    fix = false
+    stage = false
+    steps = (fileChecks) {
+      ["cargo-test"] {
+        glob = RUST_FILES + List("tests/**")
+        depends = List("cargo-clippy")
+        exclusive = true
+        check = new CommandSpec {
+          command = new Command {
+            argv = List("cargo", "test", "--locked", "--all-targets")
+          }
+          effect = "write"
+        }
+      }
+    }
+  }
+}

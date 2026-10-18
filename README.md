@@ -89,14 +89,14 @@ CI runs formatting, Clippy, and tests on macOS and Windows, packages each native
 
 ## Release
 
-Releases come from `main`, and one command cuts them. Mise installs [cargo-release](https://github.com/crate-ci/cargo-release) on first use:
+Releases come from `main`, and one command cuts them with [bumpp](https://github.com/antfu-collective/bumpp):
 
 ```sh
-mise run release:dry-run patch   # preview
-mise run release patch           # 0.1.0 -> 0.1.1
+mise run release         # choose the version from a prompt
+mise run release patch   # 0.1.0 -> 0.1.1
 ```
 
-The argument is `patch`, `minor`, `major`, or an explicit version like `0.2.0`; with none, it releases whatever `Cargo.toml` already says. The command runs `mise run check`, then bumps `Cargo.toml` and `Cargo.lock` together, commits `chore: release X.Y.Z`, tags `vX.Y.Z`, and pushes. It refuses a dirty tree or any branch but `main`.
+The argument is `patch`, `minor`, `major`, or an explicit version like `0.2.0`. The command runs `mise run check`, then shows the new version and recent commits and waits for confirmation before changing anything. It bumps `package.json`, `Cargo.toml`, and `Cargo.lock` together, commits `chore(release): vX.Y.Z`, tags `vX.Y.Z`, and pushes. It refuses a dirty tree, any branch but `main`, a `package.json` version that disagrees with `Cargo.toml`, or unpushed local tags that would go out with the release.
 
 That tag starts the release workflow: the same checks run on macOS and Windows, every package builds, and everything lands in a GitHub release with generated notes and `SHA256SUMS.txt`. A tag like `v0.2.0-rc.1` publishes as a prerelease. The release is created only after every build succeeds, so a red build leaves no half-published release — just a tag to retry from. Re-running the workflow retries the upload, and the workflow refuses a tag that disagrees with `Cargo.toml`. If the tag itself is wrong, delete it (`git push origin :refs/tags/vX.Y.Z`) and run the release command again.
 

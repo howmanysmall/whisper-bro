@@ -1,0 +1,43 @@
+# cargo-deny: https://embarkstudios.github.io/cargo-deny/
+# Run locally with `cargo deny check`.
+
+[graph]
+# Only the platforms whisper-bro ships for, so Linux-only dependencies don't
+# fail the checks.
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"]
+all-features = true
+
+[advisories]
+# Unmaintained crates are reported, but only direct dependencies fail.
+unmaintained = "workspace"
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Permissive licenses plus MPL-2.0, whose copyleft covers only the files of the
+# crate that uses it.
+allow = [
+	"Apache-2.0",
+	"Apache-2.0 WITH LLVM-exception",
+	"BSD-2-Clause",
+	"BSD-3-Clause",
+	"BSL-1.0",
+	"CDLA-Permissive-2.0",
+	"ISC",
+	"MIT",
+	"MPL-2.0",
+	"Unicode-3.0",
+	"Unlicense",
+	"Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Duplicate versions are common in GUI dependency trees; report them without
+# failing.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

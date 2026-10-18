@@ -1,4 +1,4 @@
-name: Check and package
+name: CI
 
 on:
   push:
@@ -7,34 +7,154 @@ on:
   workflow_dispatch:
   workflow_call:
 
-permissions:
-  contents: read
+permissions: {}
+
+# A new push to a pull request cancels its older runs. Pushes to main and
+# releases run to completion.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Incremental artifacts only help local rebuilds; in CI they slow builds and
+  # bloat the cache.
+  CARGO_INCREMENTAL: "0"
+  # Debug info is the largest part of a test build and nothing in CI reads it.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  RUST_BACKTRACE: short
+  # mise.toml routes cargo through mbx, whose local cache starts empty on every
+  # runner. Swatinem/rust-cache restores target/ instead.
+  MBX_DISABLE: "1"
 
 jobs:
-  check:
+  # Everything that doesn't compile the crate, on one fast Linux runner:
+  # formatting, Markdown, TOML, shell, workflows, TypeScript, secrets, and
+  # cargo-deny's advisory, license, and source checks. The crate only builds for
+  # macOS and Windows, so Clippy runs in `test` instead.
+  lint:
+    name: Lint
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # commitlint and betterleaks read the full history.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install_args: >-
+            betterleaks cargo-deny hk jactionlint mr-boxington node pinact pkl pnpm rumdl rust
+            shellcheck shfmt tombi
+          cache: ${{ github.ref_type != 'tag' }}
+
+      # The history scan needs no Node packages, so it runs during the install.
+      - id: install-packages
+        name: Install packages
+        run: pnpm install --frozen-lockfile
+        background: true
+
+      - name: Scan history for secrets
+        run: betterleaks git --config .betterleaks.toml --redact --no-banner
+
+      - name: Wait for packages
+        wait: install-packages
+
+      - parallel:
+          - name: hk checks
+            env:
+              GH_TOKEN: ${{ github.token }}
+            # betterleaks only scans staged changes here; the history scan
+            # above covers it.
+            run: hk check --all --no-fail-fast --skip-step cargo-clippy --skip-step betterleaks
+
+          - name: Lint commit messages
+            if: github.event_name == 'pull_request'
+            env:
+              BASE_SHA: ${{ github.event.pull_request.base.sha }}
+              HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+            run: node --run commitlint -- --strict --from "$BASE_SHA" --to "$HEAD_SHA"
+
+  test:
+    name: Test (${{ matrix.name }})
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-15
+          - name: macOS
+            os: macos-15
             target: aarch64-apple-darwin
-          - os: windows-latest
+          - name: Windows
+            os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     env:
       CARGO_BUILD_TARGET: ${{ matrix.target }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v4
-      - uses: Swatinem/rust-cache@v2
-      - run: mise run check
-      - run: mise run build
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-rust
+        with:
+          target: ${{ matrix.target }}
+          cache-key: test
+
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked --all-targets
+
+  # Runs alongside `test` rather than after it, so a green run takes as long as
+  # the slowest job instead of the sum of them.
+  package:
+    name: Package (${{ matrix.name }})
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            os: macos-15
+            target: aarch64-apple-darwin
+          # Cross-compiled on Apple Silicon, which is faster than an Intel
+          # runner.
+          - name: macOS Intel
+            os: macos-15
+            target: x86_64-apple-darwin
+          - name: Windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-rust
+        with:
+          target: ${{ matrix.target }}
+          cache-key: package
+
       - if: runner.os == 'macOS'
         run: mise run package:macos
+
       - if: runner.os == 'Windows'
         shell: pwsh
         run: mise run package:windows
-      - uses: actions/upload-artifact@v7
+
+      # release.yml downloads every artifact of the run into dist/.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: whisper-bro-${{ matrix.target }}
           path: |
@@ -42,18 +162,15 @@ jobs:
             dist/*.exe
           if-no-files-found: error
 
-  macos-intel:
-    runs-on: macos-15
-    env:
-      CARGO_BUILD_TARGET: x86_64-apple-darwin
+  # One status to require in branch protection, so adding or renaming a job
+  # doesn't mean editing the rules.
+  ci:
+    name: CI
+    if: always()
+    needs: [lint, test, package]
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v4
-      - run: mise exec -- rustup target add x86_64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
-      - run: mise run package:macos
-      - uses: actions/upload-artifact@v7
-        with:
-          name: whisper-bro-x86_64-apple-darwin
-          path: dist/*.zip
-          if-no-files-found: error
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

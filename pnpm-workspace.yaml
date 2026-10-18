@@ -1,0 +1,83 @@
+autoInstallPeers: true
+blockExoticSubdeps: true
+catalogMode: prefer
+cleanupUnusedCatalogs: true
+enableGlobalVirtualStore: true
+engineStrict: true
+minimumReleaseAge: 1440
+
+minimumReleaseAgeExclude:
+  - "@biomejs/*"
+  - "@oxfmt/*"
+  - oxfmt
+  - skills
+
+minimumReleaseAgeExcludePrune: true
+minimumReleaseAgeStrict: true
+resolutionMode: time-based
+shamefullyHoist: false
+shellEmulator: true
+strictDepBuilds: true
+strictPeerDependencies: false
+trustLockfile: true
+trustPolicy: no-downgrade
+
+trustPolicyExclude:
+  - skills
+
+trustPolicyIgnoreAfter: 10080
+lockfile: true
+
+catalogs:
+  commitlint:
+    "@commitlint/cli": 21.2.3
+    "@commitlint/config-conventional": 21.2.3
+    "@commitlint/types": 21.2.3
+  lint:
+    "@biomejs/biome": 2.5.15
+    oxfmt: 0.73.0
+  scripts:
+    tinyexec: 1.3.1
+  tooling:
+    bumpp: 12.3.0
+    skills: 1.7.2
+    typescript: 7.0.2
+  types:
+    "@types/node": ^26.6.5
+
+packageExtensions:
+  "@stryker-mutator/core@10.0.0":
+    dependencies:
+      "@stryker-mutator/vitest-runner": 10.0.0
+      typescript: 5.9.3
+  astro@7.4.0:
+    peerDependencies:
+      "@astrojs/check": "*"
+      typescript: "*"
+    peerDependenciesMeta:
+      "@astrojs/check":
+        optional: true
+      typescript:
+        optional: true
+
+peerDependencyRules:
+  allowedVersions:
+    "@emnapi/core": ">=1.0.0"
+    "@emnapi/runtime": ">=1.0.0"
+    "@typescript-eslint/*>typescript": ">=6.0.0 <7.0.0"
+
+fetchRetries: 5
+fetchRetryMaxtimeout: 30000
+fetchRetryMintimeout: 1000
+fetchTimeout: 60000
+
+permissions:
+  fallow:
+    skills: true
+
+registries:
+  "@jsr": https://npm.jsr.io
+
+strictSsl: true
+strictStorePkgContentCheck: true
+verifyStoreIntegrity: true

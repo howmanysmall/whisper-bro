@@ -1,0 +1,35 @@
+name: Set up Rust
+description: Install the Rust toolchain pinned in mise.toml for one target, and restore its build cache.
+
+inputs:
+  target:
+    description: Rust target triple to build for, such as aarch64-apple-darwin.
+    required: true
+  cache-key:
+    description: Names this job's build cache, so jobs that build differently don't share one.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      with:
+        # mise.toml enables mr_boxington on rust, which requires mbx installed.
+        install_args: rust mr-boxington
+        cache: ${{ github.ref_type != 'tag' }}
+
+    # A no-op for the runner's own target; needed to cross-compile.
+    - shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+      run: rustup target add "$TARGET"
+
+    # Releases build from scratch rather than from a cache a pull request could
+    # have written.
+    - if: github.ref_type != 'tag'
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        shared-key: ${{ inputs.cache-key }}-${{ inputs.target }}
+        # Pull requests read main's cache but never write their own, so they
+        # can't evict it.
+        save-if: ${{ github.ref == 'refs/heads/main' }}
