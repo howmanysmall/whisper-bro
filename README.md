@@ -52,6 +52,22 @@ Use `whisper-bro devices` to get microphone names. Leaving `microphone` unset fo
 
 The utility joins `vocabulary` into a prompt that shows the transcription model how to spell those words. OpenRouter passes it on only when it routes the request to Groq or DeepInfra. Other providers ignore it.
 
+### Pick a transcription model
+
+Last checked 2026-10-18 against the [Artificial Analysis non-streaming leaderboard](https://artificialanalysis.ai/speech-to-text/non-streaming). The utility uploads the finished recording, so the streaming board doesn't apply. Only models that OpenRouter's transcription endpoint serves count here.
+
+| Category         | Model                         | `transcription_model`           | Word error rate | Speed factor | USD per 1,000 minutes |
+| ---------------- | ----------------------------- | ------------------------------- | --------------- | ------------ | --------------------- |
+| Best performance | MAI-Transcribe-2              | `microsoft/mai-transcribe-2`    | 2.0%            | 317          | 1.67                  |
+| Best value       | Whisper Large v3 Turbo (Groq) | `openai/whisper-large-v3-turbo` | 4.6%            | 195          | 0.67                  |
+| Best overall     | MAI-Transcribe-2              | `microsoft/mai-transcribe-2`    | 2.0%            | 317          | 1.67                  |
+
+Word error rate is AA-WER v2, where lower is better. Speed factor is seconds of audio transcribed per second. Prices are the leaderboard's, and OpenRouter lists MAI-Transcribe-2 at the same $0.10 an hour.
+
+MAI-Transcribe-2 has the lowest error rate of any model on OpenRouter, and it's also one of the fastest at a near-bottom price. It wins both performance and overall. The one model ahead of it, Alibaba's Fun-Realtime-ASR-preview at 1.7%, isn't on OpenRouter. ElevenLabs Scribe v2 (`elevenlabs/scribe-v2`, 2.2%) is the runner-up. Whisper Large v3 Turbo stays the default because it's the cheapest benchmarked option and still fast, though it makes more than twice as many errors as MAI-Transcribe-2.
+
+Switching away from Whisper drops `vocabulary`, since OpenRouter passes the prompt only to Groq and DeepInfra.
+
 Cleanup is off by default. When on, it fixes punctuation and capitalization, removes filler, repetitions, and false starts, and applies spoken self-corrections before insertion: "Friday, actually Monday" becomes "Monday." It keeps names, numbers, and technical identifiers as spoken, and doesn't summarize or answer the text. It keeps the original transcript if its request times out, fails, or produces truncated output. It doesn't hold the result indefinitely waiting for an edit.
 
 Other commands:
