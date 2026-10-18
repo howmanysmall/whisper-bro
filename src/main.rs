@@ -5,7 +5,7 @@ use std::{
     io::{self, IsTerminal, Write},
     path::PathBuf,
     sync::Mutex,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use anyhow::{Context, Result, ensure};
@@ -51,11 +51,6 @@ enum Command {
     /// Transcribe a WAV file without inserting text into another app.
     Transcribe {
         file: PathBuf,
-        #[arg(
-            long,
-            help = "Send audio at recording speed to measure finalization latency"
-        )]
-        realtime: bool,
         #[arg(long)]
         no_cleanup: bool,
     },
@@ -142,14 +137,10 @@ fn execute(cli: Cli) -> Result<()> {
             println!("{}", platform::permission_status());
             Ok(())
         }
-        Command::Transcribe {
-            file,
-            realtime,
-            no_cleanup,
-        } => {
+        Command::Transcribe { file, no_cleanup } => {
             config.cleanup.enabled &= !no_cleanup;
             let credentials = Credentials::load()?;
-            app::runtime()?.block_on(transcribe_file(config, credentials, file, realtime))
+            app::runtime()?.block_on(transcribe_file(config, credentials, file))
         }
         Command::Run => {
             let credentials = Credentials::load()?;
@@ -207,18 +198,16 @@ fn init_log(paths: &Paths) -> Result<()> {
     let file = OpenOptions::new().create(true).append(true).open(path)?;
     tracing_subscriber::fmt()
         .with_ansi(false)
-        .with_max_level(tracing::Level::INFO)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
         .with_writer(Mutex::new(file))
         .init();
     Ok(())
 }
 
-async fn transcribe_file(
-    config: Config,
-    credentials: Credentials,
-    path: PathBuf,
-    realtime: bool,
-) -> Result<()> {
+async fn transcribe_file(config: Config, credentials: Credentials, path: PathBuf) -> Result<()> {
     let mut reader = hound::WavReader::open(path).context("Open WAV file")?;
     let spec = reader.spec();
     ensure!(
@@ -243,11 +232,7 @@ async fn transcribe_file(
         let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel(2);
         let mut encoder = audio::Encoder::new(spec.channels as usize, spec.sample_rate, frame_tx);
         let chunk = (spec.sample_rate as usize / 50).max(1) * spec.channels as usize;
-        let start = tokio::time::Instant::now();
-        for (index, samples) in samples.chunks(chunk).enumerate() {
-            if realtime {
-                tokio::time::sleep_until(start + Duration::from_millis(index as u64 * 20)).await;
-            }
+        for samples in samples.chunks(chunk) {
             encoder.push(samples);
             encoder.flush();
             while let Ok(frame) = frame_rx.try_recv() {
@@ -274,8 +259,7 @@ async fn transcribe_file(
     .await;
     writeln!(io::stdout(), "{text}")?;
     eprintln!(
-        "connect={}ms finalize={}ms stop_to_result={}ms cleanup={}",
-        transcript.connect_ms,
+        "finalize={}ms stop_to_result={}ms cleanup={}",
         transcript.finalize_ms,
         stopped.elapsed().as_millis(),
         status.label()

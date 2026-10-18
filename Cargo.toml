@@ -3,7 +3,7 @@ name = "yap"
 version = "2.0.1"
 edition = "2024"
 rust-version = "1.98"
-description = "Shortcut-driven streaming dictation for Windows and macOS. Entirely slopped together by GPT."
+description = "Shortcut-driven voice typing for Windows and macOS: record, transcribe through OpenRouter, paste."
 license = "MIT"
 
 [dependencies]
@@ -12,8 +12,6 @@ base64 = "0.23"
 clap = { version = "4", features = ["derive"] }
 cpal = "0.16"
 directories = "6"
-fs2 = "0.4"
-futures-util = { version = "0.3", features = ["sink"] }
 hound = "3.5"
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -21,17 +19,14 @@ rpassword = "7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
-thiserror = "2"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
-tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 toml = "1.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-url = "2"
 zeroize = "1"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["test-util"] }
+tokio = { version = "1", features = ["net", "test-util"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"

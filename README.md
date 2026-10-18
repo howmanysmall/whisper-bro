@@ -160,10 +160,10 @@ The useful number is the time between stopping and having text in the destinatio
 For repeatable provider checks, use the same WAV recordings:
 
 ```sh
-yap transcribe --realtime prompt.wav
-yap transcribe --realtime --no-cleanup prompt.wav
+yap transcribe prompt.wav
+yap transcribe --no-cleanup prompt.wav
 ```
 
-Text goes to stdout, and timings go to stderr. `finalize` is the upload and transcription time, and `stop_to_result` adds cleanup. `connect` always reads `0ms`, because there is no streaming connection any more. Normal dictation writes microphone-ready and stop-to-paste timings to `yap.log` in the directory reported by `doctor`.
+Text goes to stdout, and timings go to stderr. `finalize` is the upload and transcription time, and `stop_to_result` adds cleanup. Normal dictation writes microphone-ready and stop-to-paste timings to `yap.log` in the directory reported by `doctor`. Set `RUST_LOG=debug` to raise the log level.
 
 The first targets are 150 ms to recording-ready feedback and 1 second median from stop to paste. The p95 target is 2 seconds. Both paste targets apply to dictations of 5 to 60 seconds on a stable connection. Nobody has measured them yet, and they date from the streaming design, so the upload design may need new ones. Check T3 Chat, Discord, and a code editor on both operating systems with short sentences, technical names, spoken corrections, multi-minute prompts, focus changes, network loss, and headset reconnects. Include cold connections and Bluetooth microphone startup in the measurements.
