@@ -53,24 +53,32 @@ jobs:
             shellcheck shfmt tombi
           cache: ${{ github.ref_type != 'tag' }}
 
-      - run: pnpm install --frozen-lockfile
-
-      - name: hk checks
-        env:
-          GH_TOKEN: ${{ github.token }}
-        # betterleaks only scans staged changes here; the next step scans the
-        # history instead.
-        run: hk check --all --no-fail-fast --skip-step cargo-clippy --skip-step betterleaks
+      # The history scan needs no Node packages, so it runs during the install.
+      - id: install-packages
+        name: Install packages
+        run: pnpm install --frozen-lockfile
+        background: true
 
       - name: Scan history for secrets
         run: betterleaks git --config .betterleaks.toml --redact --no-banner
 
-      - name: Lint commit messages
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: node --run commitlint -- --strict --from "$BASE_SHA" --to "$HEAD_SHA"
+      - name: Wait for packages
+        wait: install-packages
+
+      - parallel:
+          - name: hk checks
+            env:
+              GH_TOKEN: ${{ github.token }}
+            # betterleaks only scans staged changes here; the history scan
+            # above covers it.
+            run: hk check --all --no-fail-fast --skip-step cargo-clippy --skip-step betterleaks
+
+          - name: Lint commit messages
+            if: github.event_name == 'pull_request'
+            env:
+              BASE_SHA: ${{ github.event.pull_request.base.sha }}
+              HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+            run: node --run commitlint -- --strict --from "$BASE_SHA" --to "$HEAD_SHA"
 
   test:
     name: Test (${{ matrix.name }})
