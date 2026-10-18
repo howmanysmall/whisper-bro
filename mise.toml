@@ -1,5 +1,33 @@
+[env]
+_.file = { path = ".env" }
+_.path = ["{{config_root}}/node_modules/.bin", "{{cwd}}/node_modules/.bin"]
+
+HK_MISE = 1
+
+[settings]
+experimental = true
+auto_install = false
+lockfile = true
+provenance_api_failures_fatal = false
+cargo.binstall_native = true
+
 [tools]
+betterleaks = "latest"
+bun = "latest"
+communique = { version = "latest", workflow = "release.yml@refs/heads/main" }
+direnv = "latest"
+hk = { version = "2.7.0", workflow = "release.yml" }
+jactionlint = "latest"
+ni = { version = "latest", auto_update = true }
+node = "26"
+pinact = "latest"
+pkl = "latest"
+pnpm = "12.14.0"
+rumdl = "latest"
 rust = { version = "1.98.1", components = ["rustfmt", "clippy"] }
+shellcheck = "latest"
+shfmt = "latest"
+tombi = "latest"
 
 [tasks.build]
 description = "Build the release binary"
@@ -20,9 +48,9 @@ run = "cargo fmt --all"
 [tasks.check]
 description = "Check formatting, lint, and test in sequence"
 run = [
-  "cargo fmt --all -- --check",
-  "cargo clippy --locked --all-targets -- -D warnings",
-  "cargo test --locked --all-targets",
+	"cargo fmt --all -- --check",
+	"cargo clippy --locked --all-targets -- -D warnings",
+	"cargo test --locked --all-targets",
 ]
 
 [tasks."package:macos"]
@@ -34,8 +62,8 @@ run = "bash scripts/package-macos.sh"
 description = "Build the Windows portable zip and installer (installer requires Inno Setup 6)"
 depends = ["build"]
 run = [
-  "powershell -NoProfile -File scripts/package-windows.ps1",
-  "powershell -NoProfile -File scripts/package-windows-installer.ps1",
+	"powershell -NoProfile -File scripts/package-windows.ps1",
+	"powershell -NoProfile -File scripts/package-windows-installer.ps1",
 ]
 
 [tasks."package:windows-portable"]
@@ -47,10 +75,7 @@ run = "powershell -NoProfile -File scripts/package-windows.ps1"
 description = "Check, tag, and push a release so GitHub Actions publishes it. Pass patch, minor, major, or an explicit version; with no argument it releases the version already in Cargo.toml."
 usage = 'arg "[level]" default="release" help="patch, minor, major, release, or an explicit X.Y.Z"'
 tools = { "github:crate-ci/cargo-release" = "1.1.6" }
-run = [
-  "mise run check",
-  "cargo release --execute {{usage.level}}",
-]
+run = ["mise run check", "cargo release --execute {{usage.level}}"]
 
 [tasks."release:dry-run"]
 description = "Preview a release without committing, tagging, or pushing (same argument as release)"
