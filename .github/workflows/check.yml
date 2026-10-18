@@ -95,20 +95,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - uses: ./.github/actions/setup-rust
         with:
-          install_args: rust mr-boxington
-          cache: ${{ github.ref_type != 'tag' }}
-
-      # Releases build from scratch rather than from a cache a pull request
-      # could have written.
-      - if: github.ref_type != 'tag'
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: test-${{ matrix.target }}
-          # Pull requests read main's cache but never write their own, so they
-          # can't evict it.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          target: ${{ matrix.target }}
+          cache-key: test
 
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
@@ -143,19 +133,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - uses: ./.github/actions/setup-rust
         with:
-          install_args: rust mr-boxington
-          cache: ${{ github.ref_type != 'tag' }}
-
-      - if: matrix.target == 'x86_64-apple-darwin'
-        run: rustup target add x86_64-apple-darwin
-
-      - if: github.ref_type != 'tag'
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: package-${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          target: ${{ matrix.target }}
+          cache-key: package
 
       - if: runner.os == 'macOS'
         run: mise run package:macos
