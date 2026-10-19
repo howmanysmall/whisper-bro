@@ -7,6 +7,9 @@ $versionLine = Select-String -Path (Join-Path $root 'Cargo.toml') -Pattern '^ver
 if (-not $versionLine) { throw 'Could not read the package version from Cargo.toml' }
 $version = $versionLine.Matches[0].Groups[1].Value
 
+# VersionInfoVersion needs four numeric parts, so drop any -prerelease suffix.
+$versionNumeric = $version -replace '[-+].*$', ''
+
 $target = if ($env:CARGO_BUILD_TARGET) { "target/$env:CARGO_BUILD_TARGET" } else { 'target' }
 $binary = [System.IO.Path]::GetFullPath((Join-Path $root "$target/release/yap.exe"))
 if (-not (Test-Path $binary)) { throw "Missing $binary. Build it with mise run build first." }
@@ -23,6 +26,6 @@ if ($command) {
     throw 'Inno Setup 6 is required to build the installer: https://jrsoftware.org/isinfo.php'
 }
 
-& $iscc (Join-Path $root 'packaging/windows.iss') "/DAppVersion=$version" "/DAppBinary=$binary"
+& $iscc (Join-Path $root 'packaging/windows.iss') "/DAppVersion=$version" "/DAppVersionNumeric=$versionNumeric" "/DAppBinary=$binary"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Output "Packaged $(Join-Path $root 'dist\yap-windows-x64-setup.exe')"

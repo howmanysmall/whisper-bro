@@ -3,7 +3,7 @@ description: Install the Rust toolchain pinned in mise.toml for one target, and 
 
 inputs:
   target:
-    description: Rust target triple to build for, such as aarch64-apple-darwin.
+    description: Rust target triples to build for, space-separated, such as aarch64-apple-darwin.
     required: true
   cache-key:
     description: Names this job's build cache, so jobs that build differently don't share one.
@@ -24,15 +24,24 @@ runs:
     # A no-op for the runner's own target; needed to cross-compile.
     - shell: bash
       env:
-        TARGET: ${{ inputs.target }}
-      run: rustup target add "$TARGET"
+        TARGETS: ${{ inputs.target }}
+      run: |
+        for target in $TARGETS; do
+          rustup target add "$target"
+        done
+
+    - id: cache-suffix
+      shell: bash
+      env:
+        TARGETS: ${{ inputs.target }}
+      run: echo "value=${TARGETS// /-}" >> "$GITHUB_OUTPUT"
 
     # Releases build from scratch rather than from a cache a pull request could
     # have written.
     - if: inputs.cache == 'true' && github.ref_type != 'tag'
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
-        shared-key: ${{ inputs.cache-key }}-${{ inputs.target }}
+        shared-key: ${{ inputs.cache-key }}-${{ steps.cache-suffix.outputs.value }}
         # Pull requests read main's cache but never write their own, so they
         # can't evict it.
         save-if: ${{ github.ref == 'refs/heads/main' }}

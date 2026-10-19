@@ -6,6 +6,9 @@
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
+#ifndef AppVersionNumeric
+  #define AppVersionNumeric "0.0.0"
+#endif
 #ifndef AppBinary
   #define AppBinary "..\target\release\yap.exe"
 #endif
@@ -14,6 +17,12 @@
 AppId=dev.yap
 AppName={#AppName}
 AppVersion={#AppVersion}
+AppPublisher=HowManySmall
+AppPublisherURL=https://github.com/howmanysmall/yap
+AppSupportURL=https://github.com/howmanysmall/yap/issues
+AppUpdatesURL=https://github.com/howmanysmall/yap/releases
+VersionInfoVersion={#AppVersionNumeric}
+SetupIconFile=yap.ico
 DefaultDirName={localappdata}\Programs\Yap
 DefaultGroupName={#AppName}
 PrivilegesRequired=lowest
@@ -43,4 +52,5 @@ Name: "autostart"; Description: "Start Yap when I sign in"; Flags: unchecked
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Yap"; ValueData: """{app}\yap.exe"" run"; Tasks: autostart; Flags: uninsdeletevalue
 
 [Run]
-Filename: "{app}\Configure Yap.cmd"; Description: "Configure API keys"; Flags: postinstall skipifsilent shellexec
+Filename: "{app}\yap.exe"; Parameters: "run"; Description: "Launch Yap"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\Configure Yap.cmd"; Description: "Set the OpenRouter API key"; Flags: postinstall skipifsilent shellexec
