@@ -9,10 +9,20 @@ if [[ -z "$version" ]]; then
 	printf 'Could not read the package version from Cargo.toml\n' >&2
 	exit 1
 fi
-target="${CARGO_BUILD_TARGET:-$(rustc -vV | sed -n 's/^host: //p')}"
-binary="$root/target/release/yap"
-if [[ -n "${CARGO_BUILD_TARGET:-}" ]]; then
-	binary="$root/target/$CARGO_BUILD_TARGET/release/yap"
+if [[ "${YAP_UNIVERSAL:-}" == "1" ]]; then
+	target="universal-apple-darwin"
+	binary="$root/target/$target/release/yap"
+	mkdir -p "$(dirname "$binary")"
+	lipo -create \
+		"$root/target/aarch64-apple-darwin/release/yap" \
+		"$root/target/x86_64-apple-darwin/release/yap" \
+		-output "$binary"
+else
+	target="${CARGO_BUILD_TARGET:-$(rustc -vV | sed -n 's/^host: //p')}"
+	binary="$root/target/release/yap"
+	if [[ -n "${CARGO_BUILD_TARGET:-}" ]]; then
+		binary="$root/target/$CARGO_BUILD_TARGET/release/yap"
+	fi
 fi
 app="$root/dist/$target/Yap.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
@@ -21,10 +31,14 @@ cp "$root/packaging/Info.plist" "$app/Contents/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$version" "$app/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$version" "$app/Contents/Info.plist"
 cp "$root/LICENSE" "$app/Contents/Resources/LICENSE"
+cp "$root/packaging/Yap.icns" "$app/Contents/Resources/Yap.icns"
 chmod +x "$app/Contents/MacOS/yap"
 codesign --force --options runtime --entitlements "$root/packaging/entitlements.plist" \
 	--sign "${MACOS_SIGNING_IDENTITY:--}" "$app"
 archive="$root/dist/yap-$target.zip"
+if [[ "$target" == "universal-apple-darwin" ]]; then
+	archive="$root/dist/yap-macos-universal.zip"
+fi
 if [[ -n "${APPLE_NOTARY_PROFILE:-}" ]]; then
 	ditto -c -k --keepParent "$app" "$archive"
 	xcrun notarytool submit "$archive" --keychain-profile "$APPLE_NOTARY_PROFILE" --wait

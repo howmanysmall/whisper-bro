@@ -133,21 +133,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macOS Apple Silicon
+          # One universal app: both architectures are built on Apple Silicon,
+          # which is faster than an Intel runner.
+          - name: macOS
             os: macos-15
-            target: aarch64-apple-darwin
-          # Cross-compiled on Apple Silicon, which is faster than an Intel
-          # runner.
-          - name: macOS Intel
-            os: macos-15
-            target: x86_64-apple-darwin
+            target: "aarch64-apple-darwin x86_64-apple-darwin"
+            artifact: yap-macos-universal
           - name: Windows
-            os: windows-latest
+            os: windows-2025
             target: x86_64-pc-windows-msvc
+            artifact: yap-x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    env:
-      CARGO_BUILD_TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -161,16 +158,22 @@ jobs:
           cache-key: package
 
       - if: runner.os == 'macOS'
-        run: mise run package:macos
+        run: mise run package:macos-universal
 
       - if: runner.os == 'Windows'
+        run: choco install innosetup --no-progress --yes
+
+      # The macOS row builds its own targets, so only Windows sets this.
+      - if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
         run: mise run package:windows
 
       # release.yml downloads every artifact of the run into dist/.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: yap-${{ matrix.target }}
+          name: ${{ matrix.artifact }}
           path: |
             dist/*.zip
             dist/*.exe

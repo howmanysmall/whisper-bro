@@ -5,6 +5,7 @@
     <key>CFBundleDisplayName</key><string>Yap</string>
     <key>CFBundleIdentifier</key><string>dev.yap</string>
     <key>CFBundleExecutable</key><string>yap</string>
+    <key>CFBundleIconFile</key><string>Yap</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <!-- Both version strings are stamped from Cargo.toml by scripts/package-macos.sh.
          0.0.0 marks a copy that was never packaged. -->

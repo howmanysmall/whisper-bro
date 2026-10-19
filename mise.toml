@@ -54,10 +54,19 @@ run = [
 	"cargo test --locked --all-targets",
 ]
 
+[tasks."build:universal"]
+description = "Build the release binary for Apple Silicon and Intel"
+run = "cargo build --locked --release --target aarch64-apple-darwin --target x86_64-apple-darwin"
+
 [tasks."package:macos"]
 description = "Build a macOS app bundle and zip"
 depends = ["build"]
 run = "bash scripts/package-macos.sh"
+
+[tasks."package:macos-universal"]
+description = "Build a universal macOS app bundle and zip"
+depends = ["build:universal"]
+run = "YAP_UNIVERSAL=1 bash scripts/package-macos.sh"
 
 [tasks."package:windows"]
 description = "Build the Windows portable zip and installer (installer requires Inno Setup 6)"
