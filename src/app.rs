@@ -227,6 +227,8 @@ impl<U: Ui> Controller<U> {
                 }
             }
             Command::TalkReleased => {}
+            // Placeholder: the retry PR replaces this arm.
+            Command::RetryLast => {}
             Command::SetApiKey
             | Command::OpenConfig
             | Command::OpenLogs

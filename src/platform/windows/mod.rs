@@ -440,6 +440,12 @@ fn popup(window: HWND, status: Status) -> Result<Option<Command>> {
                 3,
                 w!("Copy last dictation"),
             )?;
+            AppendMenuW(
+                menu,
+                enabled(matches!(status, Status::Idle | Status::Error)),
+                10,
+                w!("Retry last recording"),
+            )?;
             AppendMenuW(menu, MF_SEPARATOR, 0, None)?;
             AppendMenuW(menu, MF_STRING, 5, w!("Set API key…"))?;
             AppendMenuW(menu, MF_STRING, 6, w!("Open config file"))?;
@@ -484,6 +490,7 @@ fn popup(window: HWND, status: Status) -> Result<Option<Command>> {
                 7 => Some(Command::OpenLogs),
                 8 => Some(Command::ToggleAutostart),
                 9 => Some(Command::OpenReleases),
+                10 => Some(Command::RetryLast),
                 _ => None,
             })
         })();

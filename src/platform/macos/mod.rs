@@ -58,6 +58,8 @@ define_class!(
         fn cancel(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::Cancel); }
         #[unsafe(method(copyLast:))]
         fn copy_last(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::CopyLast); }
+        #[unsafe(method(retryLast:))]
+        fn retry_last(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::RetryLast); }
         #[unsafe(method(setApiKey:))]
         fn set_api_key(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::SetApiKey); }
         #[unsafe(method(openConfig:))]
@@ -79,6 +81,7 @@ pub struct Desktop {
     label: Retained<NSMenuItem>,
     toggle: Retained<NSMenuItem>,
     copy: Retained<NSMenuItem>,
+    retry: Retained<NSMenuItem>,
     autostart: Retained<NSMenuItem>,
     _target: Retained<MenuTarget>,
     keys: hotkeys::Hotkeys,
@@ -129,6 +132,8 @@ impl Desktop {
         menu.addItem(&menu_item(mtm, &target, "Cancel dictation", sel!(cancel:)));
         let copy = menu_item(mtm, &target, "Copy last dictation", sel!(copyLast:));
         menu.addItem(&copy);
+        let retry = menu_item(mtm, &target, "Retry last recording", sel!(retryLast:));
+        menu.addItem(&retry);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         menu.addItem(&menu_item(mtm, &target, "Set API key…", sel!(setApiKey:)));
         menu.addItem(&menu_item(
@@ -163,6 +168,7 @@ impl Desktop {
             label,
             toggle,
             copy,
+            retry,
             autostart,
             _target: target,
             keys,
@@ -203,8 +209,9 @@ impl Desktop {
                 "Start recording"
             }));
         self.toggle.setEnabled(status != Status::Processing);
-        self.copy
-            .setEnabled(matches!(status, Status::Idle | Status::Error));
+        let idle = matches!(status, Status::Idle | Status::Error);
+        self.copy.setEnabled(idle);
+        self.retry.setEnabled(idle);
         if let Some(mtm) = MainThreadMarker::new()
             && let Some(button) = self.item.button(mtm)
         {

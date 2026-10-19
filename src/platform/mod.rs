@@ -20,6 +20,7 @@ pub enum Command {
     Toggle,
     Cancel,
     CopyLast,
+    RetryLast,
     SetApiKey,
     OpenConfig,
     OpenLogs,
