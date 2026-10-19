@@ -134,6 +134,13 @@ fn execute(cli: Cli) -> Result<()> {
         }
         Command::Run => {
             let config = Config::load(&paths.config)?;
+            // A packaged app has no terminal for `yap setup`, so ask natively.
+            if credentials::get("OPENROUTER_API_KEY")?.is_none() && !io::stdin().is_terminal() {
+                ensure!(
+                    platform::prompt_api_key()?,
+                    "An OpenRouter API key is required: https://openrouter.ai/settings/keys"
+                );
+            }
             let credentials = Credentials::load()?;
             init_log(&paths)?;
             app::run(config, paths, credentials)

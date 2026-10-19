@@ -1,4 +1,6 @@
 use std::{
+    fs,
+    path::Path,
     sync::mpsc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -50,7 +52,8 @@ pub async fn dictate(
 }
 
 /// The desktop surface the controller drives: tray status, sounds, the
-/// Escape shortcut and pasting into the focused application.
+/// Escape shortcut, pasting into the focused application, and the tray
+/// menu's key prompt, file shortcuts and login-item checkmark.
 pub trait Ui {
     type Target;
     fn target(&self) -> Result<Self::Target>;
@@ -59,6 +62,11 @@ pub trait Ui {
     fn cue(&mut self, cue: Cue);
     fn cancel_shortcut(&mut self, enabled: bool) -> Result<()>;
     fn paste(&mut self, target: &Self::Target, text: &str, restore_after: Duration) -> Result<()>;
+    /// Asks for and stores the API key. Returns false when cancelled.
+    fn prompt_api_key(&mut self) -> Result<bool>;
+    fn open_path(&mut self, path: &Path) -> Result<()>;
+    fn open_url(&mut self, url: &str) -> Result<()>;
+    fn set_autostart(&mut self, enabled: bool);
 }
 
 impl Ui for Desktop {
@@ -86,6 +94,22 @@ impl Ui for Desktop {
 
     fn paste(&mut self, target: &Target, text: &str, restore_after: Duration) -> Result<()> {
         Desktop::paste(self, target, text, restore_after)
+    }
+
+    fn prompt_api_key(&mut self) -> Result<bool> {
+        platform::prompt_api_key()
+    }
+
+    fn open_path(&mut self, path: &Path) -> Result<()> {
+        platform::open_path(path)
+    }
+
+    fn open_url(&mut self, url: &str) -> Result<()> {
+        platform::open_url(url)
+    }
+
+    fn set_autostart(&mut self, enabled: bool) {
+        Desktop::set_autostart(self, enabled);
     }
 }
 
@@ -203,8 +227,52 @@ impl<U: Ui> Controller<U> {
                 }
             }
             Command::TalkReleased => {}
+            Command::SetApiKey
+            | Command::OpenConfig
+            | Command::OpenLogs
+            | Command::ToggleAutostart
+            | Command::OpenReleases => {
+                if self.session.is_none()
+                    && let Err(error) = self.menu_action(command)
+                {
+                    self.report(&format!("{error:#}"));
+                }
+            }
         }
         true
+    }
+
+    /// Runs a tray menu item that has nothing to do with dictation.
+    fn menu_action(&mut self, command: Command) -> Result<()> {
+        match command {
+            Command::SetApiKey => {
+                if self.ui.prompt_api_key()? {
+                    self.credentials = Credentials::load()?;
+                    self.ui.status(Status::Idle, "API key saved");
+                }
+            }
+            Command::OpenConfig => {
+                if !self.paths.config.exists() {
+                    self.config.save(&self.paths.config)?;
+                }
+                self.ui.open_path(&self.paths.config)?;
+            }
+            Command::OpenLogs => {
+                fs::create_dir_all(&self.paths.data)?;
+                self.ui.open_path(&self.paths.data)?;
+            }
+            Command::ToggleAutostart => {
+                let result =
+                    platform::autostart(!platform::autostart_enabled(), &self.paths.config);
+                self.ui.set_autostart(platform::autostart_enabled());
+                result?;
+            }
+            Command::OpenReleases => self
+                .ui
+                .open_url("https://github.com/howmanysmall/yap/releases/latest")?,
+            _ => {}
+        }
+        Ok(())
     }
 
     fn start_session(&mut self) -> Result<Session<U::Target>> {
@@ -426,6 +494,7 @@ pub fn run(config: Config, paths: Paths, credentials: Credentials) -> Result<()>
     };
     let runtime = runtime()?;
     let mut desktop = Desktop::new(&config.shortcut.parse()?)?;
+    desktop.set_autostart(platform::autostart_enabled());
     let (quit_tx, quit_rx) = mpsc::channel();
     runtime.spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
