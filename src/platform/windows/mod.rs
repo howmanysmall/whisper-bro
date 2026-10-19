@@ -7,7 +7,7 @@ use std::{
     os::windows::ffi::OsStrExt,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         mpsc::{self, Receiver, Sender},
     },
     time::{Duration, Instant},
@@ -68,6 +68,9 @@ pub struct Desktop {
 struct Shared {
     sender: Sender<Command>,
     status: AtomicU8,
+    cleanup: AtomicBool,
+    sounds: AtomicBool,
+    hold: AtomicBool,
 }
 
 pub struct Target {
@@ -83,6 +86,9 @@ impl Desktop {
         let shared = Box::new(Shared {
             sender,
             status: AtomicU8::new(Status::Idle as u8),
+            cleanup: AtomicBool::new(false),
+            sounds: AtomicBool::new(false),
+            hold: AtomicBool::new(false),
         });
         unsafe {
             let automation: IUIAutomation2 =
@@ -249,6 +255,13 @@ impl Desktop {
     /// is no checkmark to keep in sync.
     pub fn set_autostart(&mut self, _enabled: bool) {}
 
+    /// Stores the checkmarks the tray menu shows the next time it opens.
+    pub fn set_options(&mut self, cleanup: bool, sounds: bool, hold: bool) {
+        self.shared.cleanup.store(cleanup, Ordering::Relaxed);
+        self.shared.sounds.store(sounds, Ordering::Relaxed);
+        self.shared.hold.store(hold, Ordering::Relaxed);
+    }
+
     pub fn notify(&mut self, message: &str) {
         let mut notification = self.icon;
         notification.uFlags = NIF_INFO;
@@ -390,9 +403,7 @@ unsafe extern "system" fn window_proc(
             WM_HOTKEY if wparam.0 == TALK_ID as usize => Some(Command::TalkPressed),
             WM_HOTKEY if wparam.0 == CANCEL_ID as usize => Some(Command::Cancel),
             TRAY_MESSAGE if matches!(lparam.0 as u32, WM_RBUTTONUP | WM_LBUTTONUP) => {
-                popup(window, status(shared.status.load(Ordering::Relaxed)))
-                    .ok()
-                    .flatten()
+                popup(window, shared).ok().flatten()
             }
             WM_CLOSE => Some(Command::Quit),
             _ => None,
@@ -414,12 +425,20 @@ fn status(value: u8) -> Status {
     }
 }
 
-fn popup(window: HWND, status: Status) -> Result<Option<Command>> {
+fn popup(window: HWND, shared: &Shared) -> Result<Option<Command>> {
+    let status = status(shared.status.load(Ordering::Relaxed));
     unsafe {
         let previous = GetForegroundWindow();
         let menu = CreatePopupMenu()?;
         let result = (|| -> Result<Option<Command>> {
             let enabled = |on: bool| if on { MF_STRING } else { MF_STRING | MF_GRAYED };
+            let checked = |on: bool| {
+                if on {
+                    MF_STRING | MF_CHECKED
+                } else {
+                    MF_STRING
+                }
+            };
             let header = wide(concat!("Yap ", env!("CARGO_PKG_VERSION")));
             AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(header.as_ptr()))?;
             AppendMenuW(menu, MF_SEPARATOR, 0, None)?;
@@ -450,16 +469,27 @@ fn popup(window: HWND, status: Status) -> Result<Option<Command>> {
             AppendMenuW(menu, MF_STRING, 5, w!("Set API key…"))?;
             AppendMenuW(menu, MF_STRING, 6, w!("Open config file"))?;
             AppendMenuW(menu, MF_STRING, 7, w!("Open log folder"))?;
+            AppendMenuW(menu, MF_SEPARATOR, 0, None)?;
             AppendMenuW(
                 menu,
-                if autostart_enabled() {
-                    MF_STRING | MF_CHECKED
-                } else {
-                    MF_STRING
-                },
-                8,
-                w!("Start at login"),
+                checked(shared.cleanup.load(Ordering::Relaxed)),
+                11,
+                w!("Clean up transcript"),
             )?;
+            AppendMenuW(
+                menu,
+                checked(shared.sounds.load(Ordering::Relaxed)),
+                12,
+                w!("Play sounds"),
+            )?;
+            AppendMenuW(
+                menu,
+                checked(shared.hold.load(Ordering::Relaxed)),
+                13,
+                w!("Hold to talk"),
+            )?;
+            AppendMenuW(menu, MF_SEPARATOR, 0, None)?;
+            AppendMenuW(menu, checked(autostart_enabled()), 8, w!("Start at login"))?;
             AppendMenuW(menu, MF_STRING, 9, w!("Check for updates…"))?;
             AppendMenuW(menu, MF_SEPARATOR, 0, None)?;
             AppendMenuW(menu, MF_STRING, 4, w!("Quit Yap"))?;
@@ -491,6 +521,9 @@ fn popup(window: HWND, status: Status) -> Result<Option<Command>> {
                 8 => Some(Command::ToggleAutostart),
                 9 => Some(Command::OpenReleases),
                 10 => Some(Command::RetryLast),
+                11 => Some(Command::ToggleCleanup),
+                12 => Some(Command::ToggleSounds),
+                13 => Some(Command::ToggleMode),
                 _ => None,
             })
         })();
