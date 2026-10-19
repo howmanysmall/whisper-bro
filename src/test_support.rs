@@ -166,3 +166,23 @@ fn samples(wav: &[u8]) -> Vec<i16> {
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
 }
+
+/// `ms` of a 440 Hz tone at about −10 dBFS, as 16 kHz 16-bit mono PCM.
+pub fn tone(ms: u32) -> Vec<u8> {
+    (0..16 * ms)
+        .flat_map(|i| {
+            let phase = 2.0 * std::f32::consts::PI * 440.0 * i as f32 / 16_000.0;
+            ((phase.sin() * 10_000.0) as i16).to_le_bytes()
+        })
+        .collect()
+}
+
+/// `ms` of digital silence, as 16 kHz 16-bit mono PCM.
+pub fn silence(ms: u32) -> Vec<u8> {
+    vec![0; 32 * ms as usize]
+}
+
+/// Splits PCM into the 20 ms frames the microphone delivers.
+pub fn frames(pcm: &[u8]) -> impl Iterator<Item = &[u8]> {
+    pcm.chunks(640)
+}

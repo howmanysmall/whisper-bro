@@ -6,6 +6,7 @@ pub mod credentials;
 pub mod hotkey;
 pub mod openrouter;
 pub mod platform;
+pub mod preview;
 pub mod speech;
 pub mod storage;
 #[cfg(test)]

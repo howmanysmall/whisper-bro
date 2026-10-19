@@ -10,7 +10,7 @@ pub const BUFFER_FRAMES: usize = 500;
 pub const TARGET_RATE: u32 = 16_000;
 
 /// RMS of a 100 ms window above which the microphone is taken to hear speech: −45 dBFS.
-const SPEECH_RMS: f32 = 0.005_623_413;
+pub const SPEECH_RMS: f32 = 0.005_623_413;
 
 /// The rate the encoder emits for a given input rate. Slower inputs pass through; they're never upsampled.
 pub fn output_rate(input: u32) -> u32 {

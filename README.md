@@ -46,6 +46,8 @@ In `hold` mode, you hold the shortcut while you talk and release it to finish. T
 
 **Escape** cancels, but only while Yap is recording. Cancelling discards the recording.
 
+While you talk, your words appear phrase by phrase, about a second behind you: in the HUD on macOS, and in a small overlay at the bottom-right of the screen on Windows. This live preview is only for reading along. The pasted text still comes from one full upload of the whole recording when you stop. Preview uploads roughly double the transcription cost, which stays a fraction of a cent per dictation. Turn the preview off with `live_preview = false`.
+
 ### What you see and hear
 
 - On macOS, the menu bar shows a microphone icon that turns red while recording. A small HUD under the menu bar stays up while Yap records and shows a timer such as `Recording 0:42`.
@@ -85,6 +87,7 @@ vocabulary = [] # for example ["Luau", "roblox-ts", "T3 Chat"]
 # microphone = "Your microphone's exact name"
 max_recording_seconds = 600
 silence_timeout_seconds = 30
+live_preview = true
 paste_restore_ms = 200
 transcription_model = "openai/whisper-large-v3-turbo"
 transcription_timeout_ms = 60000
@@ -106,6 +109,8 @@ Yap rejects a file with unknown keys or out-of-range values and names the proble
 **Microphone.** Run `yap devices` to list microphone names. Leaving `microphone` unset follows the system default at the start of each recording. A disconnected or stalled device stops that recording. Reconnect it and start another.
 
 **Recording limits.** Recording stops on its own after `max_recording_seconds`, from 1 to 3600. It also stops after `silence_timeout_seconds` without speech. A recording with no speech is never uploaded.
+
+**Live preview.** `live_preview` uploads each phrase as soon as you pause, so you can read along while you talk. Set it to `false` to upload only once, when you stop.
 
 **Upload.** Yap resamples the recording to 16 kHz mono before upload, which is what the transcription models use anyway. Recordings up to 25 MB upload as a plain multipart file. Longer ones fall back to a base64 JSON body. `transcription_model` accepts any OpenRouter audio transcription model. `transcription_timeout_ms` limits how long the upload and transcription may take, from 1000 to 120000.
 
