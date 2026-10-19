@@ -145,9 +145,9 @@ to OpenRouter's `openai/gpt-oss-20b`. Both use the reader's own OpenRouter key, 
 Keychain or Windows Credential Manager, or read from `OPENROUTER_API_KEY`. Before PR #1 it
 streamed audio to Deepgram and cleaned up on Groq.
 
-Each release ships `Yap.app` zips for Apple Silicon and Intel,
-`yap-windows-x64-setup.exe`, `yap-windows-x64-portable.zip`, and
-`SHA256SUMS.txt`.
+Each release ships `yap-<triple>.tar.gz` tarballs for mise (Apple Silicon and Intel),
+`Yap-macos-universal-app.zip`, `Yap-windows-x64-setup.exe`,
+`yap-x86_64-pc-windows-msvc.zip`, and `SHA256SUMS.txt`.
 
 Repository layout worth reading when researching a change:
 - `src/main.rs` is the CLI: the `Command` enum lists every subcommand and flag, and `autostart`

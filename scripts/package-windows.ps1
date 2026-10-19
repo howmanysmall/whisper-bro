@@ -8,10 +8,9 @@ if (-not $Binary) {
 }
 $dist = Join-Path $root 'dist'
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
-$archive = Join-Path $dist 'yap-windows-x64-portable.zip'
+$archive = Join-Path $dist 'yap-x86_64-pc-windows-msvc.zip'
 Compress-Archive -Force -DestinationPath $archive -LiteralPath @(
     $Binary,
-    (Join-Path $root 'LICENSE'),
-    (Join-Path $root 'packaging/Configure Yap.cmd')
+    (Join-Path $root 'LICENSE')
 )
 Write-Output "Packaged $archive"

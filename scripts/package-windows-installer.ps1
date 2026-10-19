@@ -28,4 +28,4 @@ if ($command) {
 
 & $iscc (Join-Path $root 'packaging/windows.iss') "/DAppVersion=$version" "/DAppVersionNumeric=$versionNumeric" "/DAppBinary=$binary"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-Write-Output "Packaged $(Join-Path $root 'dist\yap-windows-x64-setup.exe')"
+Write-Output "Packaged $(Join-Path $root 'dist\Yap-windows-x64-setup.exe')"

@@ -176,6 +176,7 @@ jobs:
           name: ${{ matrix.artifact }}
           path: |
             dist/*.zip
+            dist/*.tar.gz
             dist/*.exe
           if-no-files-found: error
 

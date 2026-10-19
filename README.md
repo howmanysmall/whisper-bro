@@ -6,6 +6,18 @@ When you stop, the recording goes to [OpenRouter](https://openrouter.ai/) for tr
 
 ## Run it
 
+Install with mise:
+
+```sh
+mise use -g github:howmanysmall/yap
+yap setup
+yap autostart enable
+```
+
+Use the tray's "Set API key…" instead of `yap setup` if you prefer. `mise up` upgrades it, and mise verifies each download against the release's `SHA256SUMS.txt` and build provenance attestations.
+
+To develop it instead:
+
 Development needs [Mise](https://mise.jdx.dev/), plus Xcode Command Line Tools on macOS or the Visual Studio C++ build tools on Windows. `mise.toml` pins Rust, and `Cargo.lock` pins dependencies.
 
 ```sh
@@ -154,7 +166,7 @@ The argument is `patch`, `minor`, `major`, or an explicit version like `0.2.0`. 
 
 That tag starts the release workflow. It reruns CI and publishes every package in a GitHub release with `SHA256SUMS.txt`. While CI runs, [communique](https://github.com/jdx/communique) writes the release notes from the commits since the last tag, using `communique.toml` and the `OPENROUTER_API_KEY` repository secret. If that fails, the release falls back to GitHub's generated notes, and the run's `release-notes-review` artifact lists which commits the notes covered. A tag like `v0.2.0-rc.1` publishes as a prerelease. The workflow creates the release only after every build succeeds. A red build doesn't publish anything and leaves a tag to retry from. Re-running the workflow retries the upload, and the workflow refuses a tag that disagrees with `Cargo.toml`. If the tag itself is wrong, delete it with `git push origin :refs/tags/vX.Y.Z` and run the release command again.
 
-The downloads are `yap-macos-universal.zip` (one app for Apple Silicon and Intel), `yap-windows-x64-setup.exe`, and `yap-windows-x64-portable.zip`. None of them carry a real signature yet. macOS bundles only have an ad-hoc signature, so the first launch is blocked. On macOS 15 and later, open System Settings → Privacy & Security, scroll to the message about Yap, and choose **Open Anyway**. Right-click → **Open** no longer works. On Windows, SmartScreen blocks the installer until you choose "More info → Run anyway."
+The downloads are `yap-<triple>.tar.gz` (the bare binary, which mise installs), `Yap-macos-universal-app.zip` (one app for Apple Silicon and Intel), `Yap-windows-x64-setup.exe`, and `yap-x86_64-pc-windows-msvc.zip`. None of them carry a real signature yet. macOS bundles only have an ad-hoc signature, so the first launch is blocked. On macOS 15 and later, open System Settings → Privacy & Security, scroll to the message about Yap, and choose **Open Anyway**. Right-click → **Open** no longer works. On Windows, SmartScreen blocks the installer until you choose "More info → Run anyway."
 
 ## Measure the part that matters
 
