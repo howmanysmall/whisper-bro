@@ -323,3 +323,24 @@ fn escape_is_released_when_recording_stops_not_when_the_upload_ends() {
     );
     assert!(harness.events().contains(&Event::CancelShortcut(false)));
 }
+
+#[test]
+fn a_cleanup_timeout_is_announced_not_just_labelled() {
+    let mut harness = Harness::new();
+    harness.uploading(1, Some(Instant::now()), None);
+    let mut completed = finished(1, "hello world");
+    if let Ok(dictation) = &mut completed.result {
+        dictation.cleanup = "timed_out".into();
+    }
+
+    harness.controller.complete(completed);
+
+    assert!(
+        harness
+            .events()
+            .iter()
+            .any(|e| matches!(e, Event::Notify(m) if m.contains("cleanup timed out")))
+    );
+    assert!(harness.events().contains(&Event::Cue("warning")));
+    assert!(!harness.events().contains(&Event::Cue("done")));
+}
