@@ -5,7 +5,7 @@ use std::{
     io::{self, IsTerminal, Write},
     path::PathBuf,
     sync::Mutex,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, ensure};
@@ -14,7 +14,7 @@ use yap::{
     app, audio, cleanup,
     config::Config,
     credentials::{self, Credentials},
-    platform, speech,
+    openrouter, platform, speech,
     storage::{Dictation, Paths},
 };
 use zeroize::Zeroizing;
@@ -78,9 +78,16 @@ fn main() {
 
 fn execute(cli: Cli) -> Result<()> {
     let paths = Paths::discover(cli.config)?;
-    let mut config = Config::load(&paths.config)?;
     match cli.command.unwrap_or(Command::Run) {
-        Command::Setup => setup(&mut config, &paths),
+        Command::Setup => {
+            let mut config = Config::load(&paths.config).with_context(|| {
+                format!(
+                    "Fix or delete {} before running setup",
+                    paths.config.display()
+                )
+            })?;
+            setup(&mut config, &paths)
+        }
         Command::Devices => {
             for name in audio::devices()? {
                 println!("{name}");
@@ -88,6 +95,7 @@ fn execute(cli: Cli) -> Result<()> {
             Ok(())
         }
         Command::Config => {
+            let config = Config::load(&paths.config)?;
             println!(
                 "# {}\n{}",
                 paths.config.display(),
@@ -117,37 +125,88 @@ fn execute(cli: Cli) -> Result<()> {
             );
             Ok(())
         }
-        Command::Doctor => {
-            println!("Configuration: {}", paths.config.display());
-            println!("Recovery and logs: {}", paths.data.display());
-            println!(
-                "OPENROUTER_API_KEY: {}",
-                if credentials::get("OPENROUTER_API_KEY")?.is_some() {
-                    "available"
-                } else {
-                    "not configured"
-                }
-            );
-            println!(
-                "Transcription: {} (upload after stop)",
-                config.transcription_model
-            );
-            println!("Shortcut: {} ({:?})", config.shortcut, config.mode);
-            println!("Cleanup: {}", config.cleanup.enabled);
-            println!("{}", platform::permission_status());
-            Ok(())
-        }
+        Command::Doctor => doctor(&paths),
         Command::Transcribe { file, no_cleanup } => {
+            let mut config = Config::load(&paths.config)?;
             config.cleanup.enabled &= !no_cleanup;
             let credentials = Credentials::load()?;
             app::runtime()?.block_on(transcribe_file(config, credentials, file))
         }
         Command::Run => {
+            let config = Config::load(&paths.config)?;
             let credentials = Credentials::load()?;
             init_log(&paths)?;
             app::run(config, paths, credentials)
         }
     }
+}
+
+fn doctor(paths: &Paths) -> Result<()> {
+    println!("yap {}", env!("CARGO_PKG_VERSION"));
+    let config = match Config::load(&paths.config) {
+        Ok(config) => {
+            println!("Configuration: {}", paths.config.display());
+            config
+        }
+        Err(error) => {
+            println!(
+                "Configuration: {} — INVALID: {error:#}",
+                paths.config.display()
+            );
+            Config::default()
+        }
+    };
+    println!("Recovery and logs: {}", paths.data.display());
+    println!(
+        "Running: {}",
+        if paths.instance_lock()?.is_some() {
+            "no"
+        } else {
+            "yes"
+        }
+    );
+    let key = credentials::get("OPENROUTER_API_KEY")?;
+    let status = match key {
+        None => "not configured".to_owned(),
+        Some(key) => app::runtime()?.block_on(async {
+            let client = reqwest::Client::new();
+            match tokio::time::timeout(Duration::from_secs(5), openrouter::key_info(&client, &key))
+                .await
+            {
+                Ok(Ok(info)) => describe_key(&info),
+                Ok(Err(error)) => error.to_string(),
+                Err(_) => openrouter::ApiError::Timeout.to_string(),
+            }
+        }),
+    };
+    println!("OPENROUTER_API_KEY: {status}");
+    match audio::probe(config.microphone.as_deref(), Duration::from_millis(200)) {
+        Ok(audio::Probe {
+            sample_rate,
+            ready_after: Some(ready),
+        }) => println!(
+            "Microphone: ready in {} ms at {sample_rate} Hz",
+            ready.as_millis()
+        ),
+        Ok(_) => println!("Microphone: no audio within 200 ms"),
+        Err(error) => println!("Microphone: {error:#}"),
+    }
+    println!(
+        "Transcription: {} (upload after stop)",
+        config.transcription_model
+    );
+    println!("Shortcut: {} ({:?})", config.shortcut, config.mode);
+    println!("Cleanup: {}", config.cleanup.enabled);
+    println!("{}", platform::permission_status());
+    Ok(())
+}
+
+fn describe_key(info: &openrouter::KeyInfo) -> String {
+    let mut detail = format!("\"{}\", ${:.2} used", info.label, info.usage);
+    if let Some(remaining) = info.limit_remaining {
+        detail.push_str(&format!(", ${remaining:.2} remaining"));
+    }
+    format!("valid ({detail})")
 }
 
 fn setup(config: &mut Config, paths: &Paths) -> Result<()> {

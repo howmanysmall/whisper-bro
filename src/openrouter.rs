@@ -102,6 +102,34 @@ pub async fn check(response: reqwest::Response) -> Result<reqwest::Response, Api
     Err(classify(status.as_u16(), &body))
 }
 
+/// What OpenRouter reports about an API key.
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct KeyInfo {
+    pub label: String,
+    pub usage: f64,
+    pub limit: Option<f64>,
+    pub limit_remaining: Option<f64>,
+    pub is_free_tier: bool,
+}
+
+pub async fn key_info(client: &reqwest::Client, key: &str) -> Result<KeyInfo, ApiError> {
+    key_info_at(client, key, "https://openrouter.ai/api/v1/key").await
+}
+
+async fn key_info_at(
+    client: &reqwest::Client,
+    key: &str,
+    endpoint: &str,
+) -> Result<KeyInfo, ApiError> {
+    #[derive(serde::Deserialize)]
+    struct Envelope {
+        data: KeyInfo,
+    }
+    let response = client.get(endpoint).bearer_auth(key).send().await?;
+    Ok(check(response).await?.json::<Envelope>().await?.data)
+}
+
 #[cfg(test)]
 #[path = "openrouter_tests.rs"]
 mod tests;

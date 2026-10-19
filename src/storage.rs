@@ -51,6 +51,22 @@ impl Paths {
         Ok(())
     }
 
+    /// Takes the single-instance lock. `Ok(None)` means another instance holds it;
+    /// the lock is released when the returned file is dropped.
+    pub fn instance_lock(&self) -> Result<Option<fs::File>> {
+        fs::create_dir_all(&self.data)?;
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(self.data.join("instance.lock"))?;
+        match lock.try_lock() {
+            Ok(()) => Ok(Some(lock)),
+            Err(fs::TryLockError::WouldBlock) => Ok(None),
+            Err(fs::TryLockError::Error(error)) => Err(error.into()),
+        }
+    }
+
     pub fn recovery(&self) -> PathBuf {
         self.data.join("last-dictation.json")
     }

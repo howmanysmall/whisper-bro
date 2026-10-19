@@ -179,3 +179,33 @@ fn holding_the_shortcut_cannot_toggle_recording_on_and_off_due_to_key_repeat() {
     key.release();
     assert!(key.press());
 }
+
+#[test]
+fn cleanup_and_language_settings_respect_their_ranges() {
+    use yap::config::CleanupConfig;
+    for (timeout_ms, valid) in [(50, false), (70_000, false), (60_000, true)] {
+        let config = Config {
+            cleanup: CleanupConfig {
+                timeout_ms,
+                ..CleanupConfig::default()
+            },
+            ..Config::default()
+        };
+        assert_eq!(config.validate().is_ok(), valid, "{timeout_ms}");
+    }
+    let blank = Config {
+        cleanup: CleanupConfig {
+            instructions: Some("  ".into()),
+            ..CleanupConfig::default()
+        },
+        ..Config::default()
+    };
+    assert!(blank.validate().is_err());
+    let auto = Config {
+        language: "AUTO".into(),
+        ..Config::default()
+    };
+    assert!(auto.validate().is_ok());
+    assert_eq!(auto.language_code(), None);
+    assert_eq!(Config::default().language_code(), Some("en"));
+}

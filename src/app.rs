@@ -1,5 +1,4 @@
 use std::{
-    fs::{self, OpenOptions},
     sync::mpsc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -423,17 +422,9 @@ pub fn runtime() -> Result<tokio::runtime::Runtime> {
 }
 
 pub fn run(config: Config, paths: Paths, credentials: Credentials) -> Result<()> {
-    fs::create_dir_all(&paths.data)?;
-    let lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(paths.data.join("instance.lock"))?;
-    match lock.try_lock() {
-        Ok(()) => {}
-        Err(std::fs::TryLockError::WouldBlock) => bail!("Yap is already running"),
-        Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
-    }
+    let Some(_lock) = paths.instance_lock()? else {
+        bail!("Yap is already running");
+    };
     let runtime = runtime()?;
     let mut desktop = Desktop::new(&config.shortcut.parse()?)?;
     let (quit_tx, quit_rx) = mpsc::channel();

@@ -25,6 +25,43 @@ pub struct Capture {
     pub sample_rate: u32,
 }
 
+/// The outcome of briefly opening the microphone.
+#[derive(Clone, Copy, Debug)]
+pub struct Probe {
+    pub sample_rate: u32,
+    /// How long the first audio took, or `None` if none arrived within the wait.
+    pub ready_after: Option<std::time::Duration>,
+}
+
+/// Opens the microphone for up to `wait` and reports whether audio arrives.
+pub fn probe(name: Option<&str>, wait: std::time::Duration) -> Result<Probe> {
+    let (capture, _audio) = Capture::start(name)?;
+    let started = std::time::Instant::now();
+    let mut ready_after = None;
+    let mut fault = None;
+    while started.elapsed() < wait {
+        if capture.is_ready() {
+            ready_after = Some(started.elapsed());
+            break;
+        }
+        fault = capture.fault();
+        if fault.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let sample_rate = capture.sample_rate;
+    // The probe discards its audio, so a flush error here is irrelevant.
+    let _ = capture.stop();
+    if let Some(fault) = fault {
+        bail!(fault);
+    }
+    Ok(Probe {
+        sample_rate,
+        ready_after,
+    })
+}
+
 pub fn devices() -> Result<Vec<String>> {
     cpal::default_host()
         .input_devices()?

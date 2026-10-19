@@ -45,7 +45,7 @@ On Windows, enable microphone access for desktop apps. Normal desktop apps can't
 shortcut = "Ctrl+Alt+Space"
 mode = "hold"
 sounds = true
-language = "en"
+language = "en" # or "auto" to let the model detect it
 vocabulary = ["Luau", "roblox-ts", "T3 Chat"]
 # microphone = "Your microphone's exact name"
 max_recording_seconds = 600
@@ -56,8 +56,12 @@ paste_restore_ms = 200
 [cleanup]
 enabled = true
 model = "openai/gpt-oss-20b"
-timeout_ms = 1200
+timeout_ms = 8000
+# instructions = "Write numbers as digits."
+# replace_instructions = false
 ```
+
+`cleanup.timeout_ms` is how long Yap waits for cleanup before pasting the unedited transcript, from 100 to 60000. The 8000 default leaves room for long spoken prompts. `cleanup.instructions` adds your own guidance after the built-in cleanup prompt. Set `replace_instructions = true` to use only your text. `--config` moves only the config file. Recovery, logs and the instance lock stay in the data directory that `yap doctor` prints.
 
 `paste_restore_ms` is how long Yap waits after pasting before it restores the previous clipboard; raise it for apps that paste late.
 
