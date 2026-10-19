@@ -37,7 +37,7 @@ codesign --force --options runtime --entitlements "$root/packaging/entitlements.
 	--sign "${MACOS_SIGNING_IDENTITY:--}" "$app"
 archive="$root/dist/yap-$target.zip"
 if [[ "$target" == "universal-apple-darwin" ]]; then
-	archive="$root/dist/yap-macos-universal.zip"
+	archive="$root/dist/Yap-macos-universal-app.zip"
 fi
 if [[ -n "${APPLE_NOTARY_PROFILE:-}" ]]; then
 	ditto -c -k --keepParent "$app" "$archive"
@@ -53,3 +53,22 @@ cp "$root/packaging/yap" "$root/dist/$target/bin/yap"
 chmod +x "$root/dist/$target/bin/yap"
 ditto -c -k --norsrc "$root/dist/$target" "$archive"
 printf 'Packaged %s\n' "$archive"
+
+# Standalone tarballs for `mise use -g github:howmanysmall/yap`: the binary and
+# LICENSE at the archive root, named after the repo and the target triple.
+tarball() {
+	local triple="$1" bin="$2" stage
+	stage="$(mktemp -d)"
+	cp "$bin" "$stage/yap"
+	chmod +x "$stage/yap"
+	cp "$root/LICENSE" "$stage/LICENSE"
+	COPYFILE_DISABLE=1 tar -czf "$root/dist/yap-$triple.tar.gz" -C "$stage" yap LICENSE
+	rm -rf "$stage"
+	printf 'Packaged %s\n' "$root/dist/yap-$triple.tar.gz"
+}
+if [[ "$target" == "universal-apple-darwin" ]]; then
+	tarball aarch64-apple-darwin "$root/target/aarch64-apple-darwin/release/yap"
+	tarball x86_64-apple-darwin "$root/target/x86_64-apple-darwin/release/yap"
+else
+	tarball "$target" "$binary"
+fi
