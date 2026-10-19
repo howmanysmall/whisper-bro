@@ -1,12 +1,18 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::Path,
-    sync::mpsc,
+    sync::{Arc, mpsc},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use tokio::{runtime::Handle, sync::mpsc::Receiver, task::JoinHandle};
+use tokio::{
+    runtime::Handle,
+    sync::{Semaphore, mpsc::Receiver},
+    task::{JoinHandle, JoinSet},
+};
+use zeroize::Zeroizing;
 
 use crate::{
     audio::Capture,
@@ -16,6 +22,7 @@ use crate::{
     hotkey::PressLatch,
     openrouter::{self, ApiError, KeyInfo},
     platform::{self, Command, Cue, Desktop, Status, Target},
+    preview::Segmenter,
     speech,
     storage::{Dictation, Paths, write_private},
 };
@@ -79,6 +86,9 @@ pub trait Ui {
     fn open_url(&mut self, url: &str) -> Result<()>;
     fn set_autostart(&mut self, enabled: bool);
     fn set_options(&mut self, cleanup: bool, sounds: bool, hold: bool);
+    /// Shows the live preview so far under the recording status. The next
+    /// idle or error status clears it.
+    fn preview(&mut self, text: &str);
 }
 
 impl Ui for Desktop {
@@ -130,6 +140,10 @@ impl Ui for Desktop {
 
     fn set_options(&mut self, cleanup: bool, sounds: bool, hold: bool) {
         Desktop::set_options(self, cleanup, sounds, hold);
+    }
+
+    fn preview(&mut self, text: &str) {
+        Desktop::preview(self, text);
     }
 }
 
@@ -187,6 +201,8 @@ struct Session<T> {
     ready_announced: bool,
     /// The elapsed second the recording status last showed.
     shown_second: Option<u64>,
+    /// Live preview text by segment sequence number.
+    preview: BTreeMap<u32, String>,
 }
 
 impl<T> Drop for Session<T> {
@@ -200,6 +216,70 @@ struct Completed {
     result: Result<Dictation, ApiError>,
     /// Whether a failed upload's WAV was saved for a retry.
     kept: bool,
+}
+
+/// What background tasks report besides a finished dictation.
+enum Notice {
+    Credits(Result<KeyInfo, ApiError>),
+    /// The transcript of one live preview segment of session `id`.
+    Preview {
+        id: u64,
+        sequence: u32,
+        text: String,
+    },
+}
+
+/// At most this many preview uploads run at once; later segments wait
+/// for a free slot, in order.
+const PREVIEW_UPLOADS: usize = 2;
+
+/// Uploads a live recording's phrases as they close, for the preview only.
+/// Dropping it aborts the uploads still running.
+struct Previews {
+    id: u64,
+    segmenter: Segmenter,
+    sample_rate: u32,
+    sequence: u32,
+    slots: Arc<Semaphore>,
+    uploads: JoinSet<()>,
+    client: reqwest::Client,
+    config: Arc<Config>,
+    key: Arc<Zeroizing<String>>,
+    endpoint: Arc<str>,
+    notices: mpsc::Sender<Notice>,
+}
+
+impl Previews {
+    fn push(&mut self, frame: &[u8]) {
+        while self.uploads.try_join_next().is_some() {}
+        let Some(pcm) = self.segmenter.push(frame) else {
+            return;
+        };
+        let wav = speech::wav([&[0; speech::HEADER][..], &pcm].concat(), self.sample_rate);
+        let (id, sequence) = (self.id, self.sequence);
+        self.sequence += 1;
+        let slots = Arc::clone(&self.slots);
+        let client = self.client.clone();
+        let config = Arc::clone(&self.config);
+        let key = Arc::clone(&self.key);
+        let endpoint = Arc::clone(&self.endpoint);
+        let notices = self.notices.clone();
+        self.uploads.spawn(async move {
+            let Ok(_slot) = slots.acquire_owned().await else {
+                return;
+            };
+            match speech::transcribe(&client, &config, &key, &wav, &endpoint).await {
+                Ok(transcript) => {
+                    let _ = notices.send(Notice::Preview {
+                        id,
+                        sequence,
+                        text: transcript.text,
+                    });
+                }
+                Err(error) => tracing::debug!(%error, sequence, "Preview upload failed"),
+            }
+        });
+    }
 }
 
 /// Where a session's audio comes from: the open microphone, or a recording
@@ -224,8 +304,8 @@ pub struct Controller<U: Ui> {
     runtime: Handle,
     tx: mpsc::Sender<Completed>,
     rx: mpsc::Receiver<Completed>,
-    notices_tx: mpsc::Sender<Result<KeyInfo, ApiError>>,
-    notices: mpsc::Receiver<Result<KeyInfo, ApiError>>,
+    notices_tx: mpsc::Sender<Notice>,
+    notices: mpsc::Receiver<Notice>,
     session: Option<Session<U::Target>>,
     next_id: u64,
     talk_key: PressLatch,
@@ -426,7 +506,7 @@ impl<U: Ui> Controller<U> {
                 tokio::time::timeout(Duration::from_secs(5), openrouter::key_info(&client, &key))
                     .await
                     .unwrap_or(Err(ApiError::Timeout));
-            let _ = notices.send(result);
+            let _ = notices.send(Notice::Credits(result));
         });
     }
 
@@ -491,6 +571,7 @@ impl<U: Ui> Controller<U> {
             incomplete: None,
             ready_announced: false,
             shown_second: None,
+            preview: BTreeMap::new(),
         })
     }
 
@@ -514,6 +595,7 @@ impl<U: Ui> Controller<U> {
             incomplete: None,
             ready_announced: true,
             shown_second: None,
+            preview: BTreeMap::new(),
         });
         self.ui.status(Status::Processing, "Retrying upload");
         Ok(())
@@ -526,13 +608,41 @@ impl<U: Ui> Controller<U> {
         let endpoint = self.endpoint.clone();
         let paths = self.paths.clone();
         let tx = self.tx.clone();
+        let notices = self.notices_tx.clone();
         self.runtime.spawn(async move {
-            let wav = match source {
-                Source::Live { audio, sample_rate } => speech::wav(
-                    speech::collect(audio, sample_rate, config.max_recording_seconds).await,
-                    sample_rate,
-                ),
-                Source::Wav(wav) => wav,
+            // Previews still running finish while the final upload runs and
+            // are aborted when this task ends.
+            let (wav, _previews) = match source {
+                Source::Live { audio, sample_rate } => {
+                    let mut previews = config.live_preview.then(|| Previews {
+                        id,
+                        segmenter: Segmenter::new(sample_rate),
+                        sample_rate,
+                        sequence: 0,
+                        slots: Arc::new(Semaphore::new(PREVIEW_UPLOADS)),
+                        uploads: JoinSet::new(),
+                        client: client.clone(),
+                        config: Arc::new(config.clone()),
+                        key: Arc::new(credentials.openrouter.clone()),
+                        endpoint: endpoint.as_str().into(),
+                        notices,
+                    });
+                    let pcm = speech::collect_with(
+                        audio,
+                        sample_rate,
+                        config.max_recording_seconds,
+                        |frame| {
+                            if let Some(previews) = &mut previews {
+                                previews.push(frame);
+                            }
+                        },
+                    )
+                    .await;
+                    // The final upload covers the unfinished last phrase, so
+                    // it is never previewed.
+                    (speech::wav(pcm, sample_rate), previews)
+                }
+                Source::Wav(wav) => (wav, None),
             };
             let result = dictate_at(&client, &config, &credentials.openrouter, &wav, &endpoint)
                 .await
@@ -609,9 +719,29 @@ impl<U: Ui> Controller<U> {
         while let Ok(completed) = self.rx.try_recv() {
             self.complete(completed);
         }
-        while let Ok(credits) = self.notices.try_recv() {
-            self.announce_credits(credits);
+        while let Ok(notice) = self.notices.try_recv() {
+            match notice {
+                Notice::Credits(credits) => self.announce_credits(credits),
+                Notice::Preview { id, sequence, text } => self.show_preview(id, sequence, text),
+            }
         }
+    }
+
+    /// Adds one preview segment to the current session and shows the
+    /// segments so far in order. Segments of an ended session are ignored.
+    fn show_preview(&mut self, id: u64, sequence: u32, text: String) {
+        let Some(current) = self.session.as_mut().filter(|s| s.id == id) else {
+            return;
+        };
+        current.preview.insert(sequence, text);
+        let joined = current
+            .preview
+            .values()
+            .map(|text| text.trim())
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.ui.preview(&joined);
     }
 
     fn complete(&mut self, completed: Completed) {

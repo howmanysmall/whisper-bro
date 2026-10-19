@@ -17,6 +17,8 @@ pub struct Config {
     pub max_recording_seconds: u64,
     /// In toggle mode, stop after this many seconds without speech; 0 never stops.
     pub silence_timeout_seconds: u64,
+    /// While recording, transcribe each phrase as it ends and show the text so far.
+    pub live_preview: bool,
     /// Unused since the streaming path was removed; accepted so config files written by older `setup` runs still load.
     #[serde(skip_serializing)]
     pub finalize_timeout_ms: serde::de::IgnoredAny,
@@ -57,6 +59,7 @@ impl Default for Config {
             vocabulary: Vec::new(),
             max_recording_seconds: 600,
             silence_timeout_seconds: 30,
+            live_preview: true,
             finalize_timeout_ms: serde::de::IgnoredAny,
             cleanup: CleanupConfig::default(),
             transcription_model: "openai/whisper-large-v3-turbo".into(),

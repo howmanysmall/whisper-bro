@@ -34,6 +34,7 @@ use crate::{
     credentials,
     hotkey::Hotkey,
     platform::{Command, Cue, Status, autostart_executable},
+    preview::Panel,
     storage::write_private,
 };
 
@@ -95,6 +96,8 @@ pub struct Desktop {
     _target: Retained<MenuTarget>,
     keys: hotkeys::Hotkeys,
     hud: hud::Hud,
+    /// The status line and live preview the HUD shows while dictating.
+    panel: Panel,
     receiver: Receiver<Command>,
 }
 
@@ -193,6 +196,7 @@ impl Desktop {
             _target: target,
             keys,
             hud,
+            panel: Panel::default(),
             receiver,
         })
     }
@@ -247,11 +251,23 @@ impl Desktop {
             }
             button.setToolTip(Some(&NSString::from_str(text)));
         }
+        self.panel.status(status, text);
         match status {
-            Status::Recording | Status::Processing => self.hud.show(text, None),
+            Status::Recording | Status::Processing => {
+                self.hud.show(&self.panel.text().unwrap_or_default(), None);
+            }
             Status::Idle => self.hud.show(text, Some(Duration::from_millis(1500))),
             // `notify` follows every error and shows it for longer.
             Status::Error => {}
+        }
+    }
+
+    /// Shows the live preview below the status line, growing the HUD
+    /// downward from under the status item.
+    pub fn preview(&mut self, text: &str) {
+        self.panel.preview(text);
+        if let Some(text) = self.panel.text() {
+            self.hud.show(&text, None);
         }
     }
 

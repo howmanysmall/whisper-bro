@@ -1,12 +1,14 @@
 mod clipboard;
 mod dialog;
 mod icons;
+mod overlay;
 
 use std::{
     ffi::c_void,
     os::windows::ffi::OsStrExt,
     path::{Path, PathBuf},
     sync::{
+        Mutex,
         atomic::{AtomicBool, AtomicU8, Ordering},
         mpsc::{self, Receiver, Sender},
     },
@@ -41,6 +43,7 @@ use windows::{
 use crate::{
     hotkey::{Hotkey, Key},
     platform::{Command, Cue, Status, autostart_executable},
+    preview::Panel,
 };
 pub use clipboard::copy_text;
 pub use dialog::prompt_api_key;
@@ -55,6 +58,10 @@ pub struct Desktop {
     icon: NOTIFYICONDATAW,
     icons: [HICON; 4],
     receiver: Receiver<Command>,
+    /// Declared before `shared` so it is destroyed first: it paints from it.
+    overlay: overlay::Overlay,
+    /// The status line and live preview the overlay shows while dictating.
+    panel: Panel,
     shared: Box<Shared>,
     automation: IUIAutomation2,
     cancel: bool,
@@ -71,6 +78,8 @@ struct Shared {
     cleanup: AtomicBool,
     sounds: AtomicBool,
     hold: AtomicBool,
+    /// The text the preview overlay paints.
+    overlay: Mutex<String>,
 }
 
 pub struct Target {
@@ -89,6 +98,7 @@ impl Desktop {
             cleanup: AtomicBool::new(false),
             sounds: AtomicBool::new(false),
             hold: AtomicBool::new(false),
+            overlay: Mutex::new(String::new()),
         });
         unsafe {
             let automation: IUIAutomation2 =
@@ -127,6 +137,16 @@ impl Desktop {
                     return Err(error);
                 }
             };
+            let overlay = match overlay::Overlay::new(instance, &shared) {
+                Ok(overlay) => overlay,
+                Err(error) => {
+                    let _ = DestroyWindow(window);
+                    for icon in icons {
+                        let _ = DestroyIcon(icon);
+                    }
+                    return Err(error);
+                }
+            };
             SetWindowLongPtrW(window, GWLP_USERDATA, (&*shared as *const Shared) as isize);
             let icon = NOTIFYICONDATAW {
                 cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
@@ -142,6 +162,8 @@ impl Desktop {
                 icon,
                 icons,
                 receiver,
+                overlay,
+                panel: Panel::default(),
                 shared,
                 _ole: ole,
                 automation,
@@ -248,6 +270,22 @@ impl Desktop {
         self.shared.status.store(status as u8, Ordering::Relaxed);
         unsafe {
             let _ = Shell_NotifyIconW(NIM_MODIFY, &self.icon);
+        }
+        self.panel.status(status, text);
+        self.render();
+    }
+
+    /// Shows the live preview in the overlay below the status line.
+    pub fn preview(&mut self, text: &str) {
+        self.panel.preview(text);
+        self.render();
+    }
+
+    /// Shows the overlay while recording or transcribing and hides it otherwise.
+    fn render(&self) {
+        match self.panel.text() {
+            Some(text) => self.overlay.show(&self.shared, &text),
+            None => self.overlay.hide(),
         }
     }
 

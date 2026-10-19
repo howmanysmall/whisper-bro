@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// Bytes reserved at the front of a recording for the WAV header.
-const HEADER: usize = 44;
+pub const HEADER: usize = 44;
 
 pub struct Transcript {
     pub text: String,
@@ -19,12 +19,26 @@ pub struct Transcript {
 /// Gathers PCM frames behind a blank 44-byte prefix, keeping at most
 /// `max_seconds` of 16-bit mono audio. A recording with no audio is exactly
 /// the prefix.
-pub async fn collect(mut audio: Receiver<Vec<u8>>, sample_rate: u32, max_seconds: u64) -> Vec<u8> {
+pub async fn collect(audio: Receiver<Vec<u8>>, sample_rate: u32, max_seconds: u64) -> Vec<u8> {
+    collect_with(audio, sample_rate, max_seconds, |_| {}).await
+}
+
+/// [`collect`], also handing each kept frame to `inspect` as it arrives.
+pub async fn collect_with(
+    mut audio: Receiver<Vec<u8>>,
+    sample_rate: u32,
+    max_seconds: u64,
+    mut inspect: impl FnMut(&[u8]),
+) -> Vec<u8> {
     let limit = sample_rate as u64 * max_seconds * 2;
     let mut buffer = vec![0; HEADER];
     while let Some(frame) = audio.recv().await {
         let remaining = limit.saturating_sub((buffer.len() - HEADER) as u64) as usize;
-        buffer.extend_from_slice(&frame[..frame.len().min(remaining)]);
+        let kept = &frame[..frame.len().min(remaining)];
+        if !kept.is_empty() {
+            inspect(kept);
+        }
+        buffer.extend_from_slice(kept);
     }
     buffer
 }

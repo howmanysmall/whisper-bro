@@ -9,7 +9,10 @@ use anyhow::anyhow;
 use zeroize::Zeroizing;
 
 use super::*;
-use crate::test_support::{REPLY, Service};
+use crate::{
+    preview::Panel,
+    test_support::{REPLY, Service, frames, silence, tone},
+};
 
 #[derive(Debug, PartialEq)]
 enum Event {
@@ -26,6 +29,7 @@ enum Event {
     CopyText(String),
     /// Cleanup, sounds and hold-to-talk checkmarks.
     SetOptions(bool, bool, bool),
+    Preview(String),
 }
 
 struct FakeUi {
@@ -35,6 +39,8 @@ struct FakeUi {
     /// What the key prompt answers: true as if the user saved a key.
     prompt_result: bool,
     recovery: PathBuf,
+    /// What the HUD or overlay would show, driven the way the platforms drive it.
+    panel: Panel,
 }
 
 impl Ui for FakeUi {
@@ -45,6 +51,7 @@ impl Ui for FakeUi {
     }
 
     fn status(&mut self, status: Status, text: &str) {
+        self.panel.status(status, text);
         self.events.push(Event::Status(status, text.into()));
     }
 
@@ -101,6 +108,11 @@ impl Ui for FakeUi {
 
     fn set_options(&mut self, cleanup: bool, sounds: bool, hold: bool) {
         self.events.push(Event::SetOptions(cleanup, sounds, hold));
+    }
+
+    fn preview(&mut self, text: &str) {
+        self.panel.preview(text);
+        self.events.push(Event::Preview(text.into()));
     }
 }
 
@@ -164,6 +176,7 @@ impl Harness {
             copy_result: Ok(()),
             prompt_result: false,
             recovery: paths.recovery(),
+            panel: Panel::default(),
         };
         let credentials = Credentials {
             openrouter: Zeroizing::new("test-key".into()),
@@ -196,15 +209,21 @@ impl Harness {
             incomplete: incomplete.map(Into::into),
             ready_announced: true,
             shown_second: None,
+            preview: BTreeMap::new(),
         });
     }
 
     /// Starts a fake OpenRouter on the harness runtime and points the
     /// controller at it.
     fn serve(&mut self, status: u16, reply: &'static str) -> Service {
+        self.serve_all(vec![(status, reply)])
+    }
+
+    /// Like [`Harness::serve`], answering successive requests in order.
+    fn serve_all(&mut self, replies: Vec<(u16, &'static str)>) -> Service {
         let service = self
             .runtime
-            .block_on(Service::start(vec![(status, reply)], Duration::ZERO));
+            .block_on(Service::start(replies, Duration::ZERO));
         self.controller.endpoint = service.url.clone();
         service
     }
@@ -224,6 +243,7 @@ impl Harness {
             incomplete: None,
             ready_announced: true,
             shown_second: None,
+            preview: BTreeMap::new(),
         });
     }
 
@@ -256,6 +276,7 @@ impl Harness {
             incomplete: None,
             ready_announced: false,
             shown_second: None,
+            preview: BTreeMap::new(),
         });
     }
 
@@ -1002,4 +1023,192 @@ fn toggles_are_ignored_while_dictating() {
     assert!(!harness.controller.config.cleanup.enabled);
     assert!(harness.controller.config.sounds);
     assert_eq!(harness.controller.config.mode, RecordingMode::Toggle);
+}
+
+fn preview_notice(harness: &Harness, id: u64, sequence: u32, text: &str) {
+    harness
+        .controller
+        .notices_tx
+        .send(Notice::Preview {
+            id,
+            sequence,
+            text: text.into(),
+        })
+        .unwrap();
+}
+
+fn previews(harness: &Harness) -> Vec<&str> {
+    harness
+        .events()
+        .iter()
+        .filter_map(|event| match event {
+            Event::Preview(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn preview_segments_render_in_sequence_order_even_when_they_arrive_out_of_order() {
+    let mut harness = Harness::new();
+    harness.recording(FakeMic::new(true, Duration::ZERO), Instant::now(), false);
+    let id = harness.controller.next_id;
+
+    preview_notice(&harness, id, 2, "the lazy dog.");
+    preview_notice(&harness, id, 0, "The quick brown fox");
+    preview_notice(&harness, id, 1, " jumps over ");
+    harness.controller.drain();
+
+    assert_eq!(
+        previews(&harness).last(),
+        Some(&"The quick brown fox jumps over the lazy dog.")
+    );
+}
+
+#[test]
+fn preview_for_a_stale_session_is_ignored() {
+    let mut harness = Harness::new();
+    harness.uploading(2, Some(Instant::now()), None);
+
+    preview_notice(&harness, 1, 0, "words from before");
+    harness.controller.drain();
+
+    assert!(harness.events().is_empty(), "{:?}", harness.events());
+    assert!(
+        harness
+            .controller
+            .session
+            .as_ref()
+            .unwrap()
+            .preview
+            .is_empty()
+    );
+}
+
+#[test]
+fn the_preview_is_cleared_when_the_dictation_ends() {
+    let mut harness = Harness::new();
+    harness.uploading(1, Some(Instant::now()), None);
+    harness
+        .controller
+        .ui
+        .status(Status::Processing, "Finishing");
+    preview_notice(&harness, 1, 0, "hello world");
+    harness.controller.drain();
+    assert_eq!(
+        harness.controller.ui.panel.text().as_deref(),
+        Some("Finishing\nhello world")
+    );
+
+    harness.controller.complete(finished(1, "Hello, world."));
+
+    assert_eq!(harness.controller.ui.panel.text(), None);
+    // A late segment of the finished dictation does not bring it back.
+    preview_notice(&harness, 1, 1, "late words");
+    harness.controller.drain();
+    harness
+        .controller
+        .ui
+        .status(Status::Recording, "Recording 0:00 · Escape cancels");
+    assert_eq!(
+        harness.controller.ui.panel.text().as_deref(),
+        Some("Recording 0:00 · Escape cancels")
+    );
+}
+
+const PREVIEW_REPLY: &str = r#"{"text":"keep the final word"}"#;
+
+/// Records 2.5 s of tone and 1 s of silence from a live microphone, waits
+/// for a preview when `wait_for_preview`, then stops and lets the final
+/// upload finish.
+fn dictate_live(harness: &mut Harness, wait_for_preview: bool) {
+    let pcm = [tone(2500), silence(1000)].concat();
+    let (audio_tx, audio) = tokio::sync::mpsc::channel(512);
+    for frame in frames(&pcm) {
+        audio_tx.try_send(frame.to_vec()).unwrap();
+    }
+    let mut mic = FakeMic::new(true, Duration::ZERO);
+    mic._audio = Some(audio_tx);
+    harness.controller.next_id += 1;
+    let id = harness.controller.next_id;
+    let task = harness.controller.spawn_transcription(
+        id,
+        Source::Live {
+            audio,
+            sample_rate: 16000,
+        },
+    );
+    harness.controller.session = Some(Session {
+        id,
+        capture: Some(Box::new(mic)),
+        task,
+        target: (),
+        started: Instant::now(),
+        stopped: None,
+        incomplete: None,
+        ready_announced: true,
+        shown_second: None,
+        preview: BTreeMap::new(),
+    });
+    let waited = Instant::now();
+    loop {
+        harness
+            .runtime
+            .block_on(async { tokio::time::sleep(Duration::from_millis(20)).await });
+        harness.controller.drain();
+        let done = if wait_for_preview {
+            !previews(harness).is_empty()
+        } else {
+            waited.elapsed() >= Duration::from_millis(300)
+        };
+        if done {
+            break;
+        }
+        assert!(
+            waited.elapsed() < Duration::from_secs(10),
+            "no preview arrived"
+        );
+    }
+    harness.controller.handle(Command::Toggle);
+    harness.finish();
+}
+
+#[test]
+fn a_live_recording_previews_its_first_phrase_before_the_full_upload_is_pasted() {
+    let mut harness = Harness::new();
+    let service = harness.serve_all(vec![(200, PREVIEW_REPLY), (200, REPLY)]);
+
+    dictate_live(&mut harness, true);
+
+    let preview = harness
+        .events()
+        .iter()
+        .position(|e| matches!(e, Event::Preview(text) if text == "keep the final word"));
+    let paste = harness
+        .events()
+        .iter()
+        .position(|e| *e == Event::Paste("Keep the final word: café.".into(), true));
+    assert!(preview.unwrap() < paste.unwrap(), "{:?}", harness.events());
+    let requests = service.requests();
+    assert_eq!(requests.len(), 2);
+    // The preview uploads only the phrase; the paste comes from everything.
+    assert!(requests[0].samples.len() < requests[1].samples.len());
+    assert_eq!(requests[1].samples.len(), 3500 * 16);
+}
+
+#[test]
+fn with_live_preview_off_only_the_full_recording_is_uploaded() {
+    let mut harness = Harness::new();
+    harness.controller.config.live_preview = false;
+    let service = harness.serve_all(vec![(200, REPLY), (200, PREVIEW_REPLY)]);
+
+    dictate_live(&mut harness, false);
+
+    assert_eq!(service.requests().len(), 1);
+    assert!(previews(&harness).is_empty());
+    assert!(
+        harness
+            .events()
+            .contains(&Event::Paste("Keep the final word: café.".into(), true))
+    );
 }
