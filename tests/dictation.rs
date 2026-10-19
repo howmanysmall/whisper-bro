@@ -209,3 +209,28 @@ fn cleanup_and_language_settings_respect_their_ranges() {
     assert_eq!(auto.language_code(), None);
     assert_eq!(Config::default().language_code(), Some("en"));
 }
+
+#[test]
+fn login_items_launch_the_mise_shim_instead_of_a_versioned_install() {
+    use std::path::{Path, PathBuf};
+
+    let data = Path::new("/Users/me/.local/share/mise");
+    let shim = data
+        .join("shims")
+        .join(format!("yap{}", std::env::consts::EXE_SUFFIX));
+    let installed = data.join("installs/github-howmanysmall-yap/2.0.1/bin/yap");
+    let app = PathBuf::from("/Applications/Yap.app/Contents/MacOS/yap");
+    for (current, shim_exists, expected) in [
+        (&installed, true, &shim),
+        (&installed, false, &installed),
+        (&app, true, &app),
+    ] {
+        assert_eq!(
+            yap::platform::autostart_executable(current, Some(data), |path| shim_exists
+                && path == shim),
+            *expected,
+            "{}",
+            current.display()
+        );
+    }
+}

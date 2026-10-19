@@ -1,6 +1,9 @@
 #![allow(clippy::unwrap_used)]
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::anyhow;
 use zeroize::Zeroizing;
@@ -15,11 +18,17 @@ enum Event {
     CancelShortcut(bool),
     /// The pasted text and whether the recovery file existed at that moment.
     Paste(String, bool),
+    PromptApiKey,
+    OpenPath(PathBuf),
+    OpenUrl(String),
+    SetAutostart(bool),
 }
 
 struct FakeUi {
     events: Vec<Event>,
     paste_result: Result<(), String>,
+    /// What the key prompt answers: true as if the user saved a key.
+    prompt_result: bool,
     recovery: PathBuf,
 }
 
@@ -60,6 +69,25 @@ impl Ui for FakeUi {
             .clone()
             .map_err(|message| anyhow!(message))
     }
+
+    fn prompt_api_key(&mut self) -> Result<bool> {
+        self.events.push(Event::PromptApiKey);
+        Ok(self.prompt_result)
+    }
+
+    fn open_path(&mut self, path: &Path) -> Result<()> {
+        self.events.push(Event::OpenPath(path.to_path_buf()));
+        Ok(())
+    }
+
+    fn open_url(&mut self, url: &str) -> Result<()> {
+        self.events.push(Event::OpenUrl(url.into()));
+        Ok(())
+    }
+
+    fn set_autostart(&mut self, enabled: bool) {
+        self.events.push(Event::SetAutostart(enabled));
+    }
 }
 
 struct Harness {
@@ -79,6 +107,7 @@ impl Harness {
         let ui = FakeUi {
             events: Vec::new(),
             paste_result: Ok(()),
+            prompt_result: false,
             recovery: paths.recovery(),
         };
         let credentials = Credentials {
@@ -343,4 +372,75 @@ fn a_cleanup_timeout_is_announced_not_just_labelled() {
     );
     assert!(harness.events().contains(&Event::Cue("warning")));
     assert!(!harness.events().contains(&Event::Cue("done")));
+}
+
+#[test]
+fn open_config_writes_defaults_first_when_the_file_is_missing() {
+    let mut harness = Harness::new();
+    let config = harness.controller.paths.config.clone();
+    assert!(!config.exists());
+
+    assert!(harness.controller.handle(Command::OpenConfig));
+
+    let written: Config = toml::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+    assert_eq!(written.shortcut, Config::default().shortcut);
+    assert!(harness.events().contains(&Event::OpenPath(config)));
+    assert!(harness.last_status().is_none());
+}
+
+#[test]
+fn open_config_keeps_an_existing_file() {
+    let mut harness = Harness::new();
+    let config = harness.controller.paths.config.clone();
+    fs::write(&config, "shortcut = \"F5\"\n").unwrap();
+
+    harness.controller.handle(Command::OpenConfig);
+
+    assert_eq!(fs::read_to_string(&config).unwrap(), "shortcut = \"F5\"\n");
+    assert_eq!(harness.events(), [Event::OpenPath(config)]);
+}
+
+#[test]
+fn open_logs_creates_the_log_folder_before_opening_it() {
+    let mut harness = Harness::new();
+    let data = harness.controller.paths.data.clone();
+
+    harness.controller.handle(Command::OpenLogs);
+
+    assert!(data.is_dir());
+    assert_eq!(harness.events(), [Event::OpenPath(data)]);
+}
+
+#[test]
+fn tray_commands_are_ignored_while_dictating() {
+    let mut harness = Harness::new();
+    harness.controller.ui.prompt_result = true;
+    harness.uploading(1, Some(Instant::now()), None);
+
+    for command in [
+        Command::SetApiKey,
+        Command::OpenConfig,
+        Command::OpenLogs,
+        Command::ToggleAutostart,
+        Command::OpenReleases,
+    ] {
+        assert!(harness.controller.handle(command));
+    }
+
+    assert!(harness.events().is_empty(), "{:?}", harness.events());
+    assert!(!harness.controller.paths.config.exists());
+    assert!(harness.controller.session.is_some());
+}
+
+#[test]
+fn a_cancelled_key_prompt_changes_nothing() {
+    let mut harness = Harness::new();
+
+    assert!(harness.controller.handle(Command::SetApiKey));
+
+    assert_eq!(harness.events(), [Event::PromptApiKey]);
+    assert_eq!(
+        harness.controller.credentials.openrouter.as_str(),
+        "test-key"
+    );
 }

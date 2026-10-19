@@ -1,9 +1,11 @@
 mod clipboard;
+mod dialog;
 mod icons;
 
 use std::{
     ffi::c_void,
-    path::Path,
+    os::windows::ffi::OsStrExt,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU8, Ordering},
         mpsc::{self, Receiver, Sender},
@@ -38,13 +40,15 @@ use windows::{
 
 use crate::{
     hotkey::{Hotkey, Key},
-    platform::{Command, Cue, Status},
+    platform::{Command, Cue, Status, autostart_executable},
 };
 pub use clipboard::copy_text;
+pub use dialog::prompt_api_key;
 
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const TALK_ID: i32 = 1;
 const CANCEL_ID: i32 = 2;
+const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 
 pub struct Desktop {
     window: HWND,
@@ -241,6 +245,10 @@ impl Desktop {
         }
     }
 
+    /// The tray menu reads `autostart_enabled` each time it opens, so there
+    /// is no checkmark to keep in sync.
+    pub fn set_autostart(&mut self, _enabled: bool) {}
+
     pub fn notify(&mut self, message: &str) {
         let mut notification = self.icon;
         notification.uFlags = NIF_INFO;
@@ -412,6 +420,9 @@ fn popup(window: HWND, status: Status) -> Result<Option<Command>> {
         let menu = CreatePopupMenu()?;
         let result = (|| -> Result<Option<Command>> {
             let enabled = |on: bool| if on { MF_STRING } else { MF_STRING | MF_GRAYED };
+            let header = wide(concat!("Yap ", env!("CARGO_PKG_VERSION")));
+            AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(header.as_ptr()))?;
+            AppendMenuW(menu, MF_SEPARATOR, 0, None)?;
             AppendMenuW(
                 menu,
                 enabled(status != Status::Processing),
@@ -429,6 +440,27 @@ fn popup(window: HWND, status: Status) -> Result<Option<Command>> {
                 3,
                 w!("Copy last dictation"),
             )?;
+            AppendMenuW(
+                menu,
+                enabled(matches!(status, Status::Idle | Status::Error)),
+                10,
+                w!("Retry last recording"),
+            )?;
+            AppendMenuW(menu, MF_SEPARATOR, 0, None)?;
+            AppendMenuW(menu, MF_STRING, 5, w!("Set API key…"))?;
+            AppendMenuW(menu, MF_STRING, 6, w!("Open config file"))?;
+            AppendMenuW(menu, MF_STRING, 7, w!("Open log folder"))?;
+            AppendMenuW(
+                menu,
+                if autostart_enabled() {
+                    MF_STRING | MF_CHECKED
+                } else {
+                    MF_STRING
+                },
+                8,
+                w!("Start at login"),
+            )?;
+            AppendMenuW(menu, MF_STRING, 9, w!("Check for updates…"))?;
             AppendMenuW(menu, MF_SEPARATOR, 0, None)?;
             AppendMenuW(menu, MF_STRING, 4, w!("Quit Yap"))?;
             let mut position = POINT::default();
@@ -453,6 +485,12 @@ fn popup(window: HWND, status: Status) -> Result<Option<Command>> {
                 2 => Some(Command::Cancel),
                 3 => Some(Command::CopyLast),
                 4 => Some(Command::Quit),
+                5 => Some(Command::SetApiKey),
+                6 => Some(Command::OpenConfig),
+                7 => Some(Command::OpenLogs),
+                8 => Some(Command::ToggleAutostart),
+                9 => Some(Command::OpenReleases),
+                10 => Some(Command::RetryLast),
                 _ => None,
             })
         })();
@@ -470,6 +508,10 @@ fn key_code(key: Key) -> u32 {
         Key::Backspace => VK_BACK.0 as u32,
         Key::Function(number) => VK_F1.0 as u32 + number as u32 - 1,
     }
+}
+
+fn wide(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(Some(0)).collect()
 }
 
 fn wide_into<const N: usize>(text: &str, destination: &mut [u16; N]) {
@@ -519,8 +561,61 @@ pub fn startup_error(message: &str) {
     }
 }
 
+/// Opens a folder in Explorer, or a file in Notepad since `.toml` often has
+/// no registered handler.
+pub fn open_path(path: &Path) -> Result<()> {
+    let target: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let target = PCWSTR(target.as_ptr());
+    let result = unsafe {
+        if path.is_dir() {
+            ShellExecuteW(None, w!("open"), target, None, None, SW_SHOWNORMAL)
+        } else {
+            ShellExecuteW(
+                None,
+                w!("open"),
+                w!("notepad.exe"),
+                target,
+                None,
+                SW_SHOWNORMAL,
+            )
+        }
+    };
+    ensure!(result.0 as isize > 32, "Could not open {}", path.display());
+    Ok(())
+}
+
+pub fn open_url(url: &str) -> Result<()> {
+    let link = wide(url);
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            PCWSTR(link.as_ptr()),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    ensure!(result.0 as isize > 32, "Could not open {url}");
+    Ok(())
+}
+
 pub fn permission_status() -> String {
     "Enable microphone access for desktop apps in Windows Settings. Insertion uses the current user's privileges.".into()
+}
+
+pub fn autostart_enabled() -> bool {
+    unsafe {
+        let mut key = HKEY::default();
+        if RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, None, KEY_QUERY_VALUE, &mut key)
+            != ERROR_SUCCESS
+        {
+            return false;
+        }
+        let found = RegQueryValueExW(key, w!("Yap"), None, None, None, None) == ERROR_SUCCESS;
+        let _ = RegCloseKey(key);
+        found
+    }
 }
 
 pub fn autostart(enabled: bool, config: &Path) -> Result<()> {
@@ -528,7 +623,7 @@ pub fn autostart(enabled: bool, config: &Path) -> Result<()> {
         let mut key = HKEY::default();
         RegCreateKeyExW(
             HKEY_CURRENT_USER,
-            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+            RUN_KEY,
             None,
             None,
             REG_OPTION_NON_VOLATILE,
@@ -546,7 +641,16 @@ pub fn autostart(enabled: bool, config: &Path) -> Result<()> {
             return Err(error.into());
         }
         let result = if enabled {
-            let executable = std::env::current_exe()?;
+            let mise_data = std::env::var_os("MISE_DATA_DIR")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("LOCALAPPDATA").map(|data| Path::new(&data).join("mise"))
+                });
+            let executable = autostart_executable(
+                &std::env::current_exe()?,
+                mise_data.as_deref(),
+                Path::is_file,
+            );
             let config = std::path::absolute(config)?;
             let command = format!(
                 "\"{}\" --config \"{}\" run",

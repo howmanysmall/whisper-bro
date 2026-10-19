@@ -19,15 +19,21 @@ use objc2::{
     sel,
 };
 use objc2_app_kit::{
-    NSAlert, NSApplication, NSApplicationActivationPolicy, NSColor, NSEventMask, NSImage,
-    NSImageSymbolConfiguration, NSMenu, NSMenuItem, NSSound, NSSquareStatusItemLength, NSStatusBar,
-    NSStatusItem, NSWorkspace,
+    NSAlert, NSAlertFirstButtonReturn, NSApplication, NSApplicationActivationPolicy, NSColor,
+    NSControlStateValueOff, NSControlStateValueOn, NSEventMask, NSImage,
+    NSImageSymbolConfiguration, NSMenu, NSMenuItem, NSSecureTextField, NSSound,
+    NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSWorkspace,
 };
-use objc2_foundation::{NSDate, NSDefaultRunLoopMode, NSObject, NSObjectProtocol, NSString};
+use objc2_foundation::{
+    NSDate, NSDefaultRunLoopMode, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
+    NSURL,
+};
+use zeroize::Zeroizing;
 
 use crate::{
+    credentials,
     hotkey::Hotkey,
-    platform::{Command, Cue, Status},
+    platform::{Command, Cue, Status, autostart_executable},
     storage::write_private,
 };
 
@@ -52,6 +58,18 @@ define_class!(
         fn cancel(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::Cancel); }
         #[unsafe(method(copyLast:))]
         fn copy_last(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::CopyLast); }
+        #[unsafe(method(retryLast:))]
+        fn retry_last(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::RetryLast); }
+        #[unsafe(method(setApiKey:))]
+        fn set_api_key(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::SetApiKey); }
+        #[unsafe(method(openConfig:))]
+        fn open_config(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::OpenConfig); }
+        #[unsafe(method(openLogs:))]
+        fn open_logs(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::OpenLogs); }
+        #[unsafe(method(toggleAutostart:))]
+        fn toggle_autostart(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::ToggleAutostart); }
+        #[unsafe(method(openReleases:))]
+        fn open_releases(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::OpenReleases); }
         #[unsafe(method(quit:))]
         fn quit(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::Quit); }
     }
@@ -63,6 +81,8 @@ pub struct Desktop {
     label: Retained<NSMenuItem>,
     toggle: Retained<NSMenuItem>,
     copy: Retained<NSMenuItem>,
+    retry: Retained<NSMenuItem>,
+    autostart: Retained<NSMenuItem>,
     _target: Retained<MenuTarget>,
     keys: hotkeys::Hotkeys,
     hud: hud::Hud,
@@ -78,8 +98,7 @@ impl Desktop {
     pub fn new(shortcut: &Hotkey) -> Result<Self> {
         let mtm = MainThreadMarker::new()
             .context("The desktop event loop must run on the main thread")?;
-        let app = NSApplication::sharedApplication(mtm);
-        app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+        let app = application(mtm);
         app.finishLaunching();
         if let Some(message) = permissions::input_switch_conflict(shortcut) {
             bail!(message);
@@ -100,12 +119,38 @@ impl Desktop {
         label.setTitle(&NSString::from_str("Yap"));
         label.setEnabled(false);
         menu.addItem(&label);
+        let version = NSMenuItem::new(mtm);
+        version.setTitle(&NSString::from_str(concat!(
+            "Yap ",
+            env!("CARGO_PKG_VERSION")
+        )));
+        version.setEnabled(false);
+        menu.addItem(&version);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         let toggle = menu_item(mtm, &target, "Start recording", sel!(toggle:));
         menu.addItem(&toggle);
         menu.addItem(&menu_item(mtm, &target, "Cancel dictation", sel!(cancel:)));
         let copy = menu_item(mtm, &target, "Copy last dictation", sel!(copyLast:));
         menu.addItem(&copy);
+        let retry = menu_item(mtm, &target, "Retry last recording", sel!(retryLast:));
+        menu.addItem(&retry);
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+        menu.addItem(&menu_item(mtm, &target, "Set API key…", sel!(setApiKey:)));
+        menu.addItem(&menu_item(
+            mtm,
+            &target,
+            "Open config file",
+            sel!(openConfig:),
+        ));
+        menu.addItem(&menu_item(mtm, &target, "Open log folder", sel!(openLogs:)));
+        let autostart = menu_item(mtm, &target, "Start at login", sel!(toggleAutostart:));
+        menu.addItem(&autostart);
+        menu.addItem(&menu_item(
+            mtm,
+            &target,
+            "Check for updates…",
+            sel!(openReleases:),
+        ));
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         menu.addItem(&menu_item(mtm, &target, "Quit Yap", sel!(quit:)));
         let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSSquareStatusItemLength);
@@ -123,6 +168,8 @@ impl Desktop {
             label,
             toggle,
             copy,
+            retry,
+            autostart,
             _target: target,
             keys,
             hud,
@@ -162,8 +209,9 @@ impl Desktop {
                 "Start recording"
             }));
         self.toggle.setEnabled(status != Status::Processing);
-        self.copy
-            .setEnabled(matches!(status, Status::Idle | Status::Error));
+        let idle = matches!(status, Status::Idle | Status::Error);
+        self.copy.setEnabled(idle);
+        self.retry.setEnabled(idle);
         if let Some(mtm) = MainThreadMarker::new()
             && let Some(button) = self.item.button(mtm)
         {
@@ -185,6 +233,14 @@ impl Desktop {
             // `notify` follows every error and shows it for longer.
             Status::Error => {}
         }
+    }
+
+    pub fn set_autostart(&mut self, enabled: bool) {
+        self.autostart.setState(if enabled {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
     }
 
     pub fn notify(&mut self, message: &str) {
@@ -304,15 +360,85 @@ pub fn cue(cue: Cue) {
 pub fn attach_console() {}
 pub fn setup_console() {}
 
+/// The shared application as a menu-bar accessory without a Dock icon.
+fn application(mtm: MainThreadMarker) -> Retained<NSApplication> {
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    app
+}
+
 pub fn startup_error(message: &str) {
     if let Some(mtm) = MainThreadMarker::new() {
-        let app = NSApplication::sharedApplication(mtm);
-        app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+        application(mtm);
         let alert = NSAlert::new(mtm);
         alert.setMessageText(&NSString::from_str("Yap couldn't start"));
         alert.setInformativeText(&NSString::from_str(message));
         alert.runModal();
     }
+}
+
+/// Asks for the OpenRouter key and saves it. Returns false when cancelled.
+pub fn prompt_api_key() -> Result<bool> {
+    let mtm = MainThreadMarker::new().context("The key prompt must run on the main thread")?;
+    let app = application(mtm);
+    #[allow(deprecated)] // `activate` needs macOS 14.
+    app.activateIgnoringOtherApps(true);
+    loop {
+        let alert = NSAlert::new(mtm);
+        alert.setMessageText(&NSString::from_str("Enter your OpenRouter API key"));
+        alert.setInformativeText(&NSString::from_str(
+            "Create a key at https://openrouter.ai/settings/keys. Yap stores it in your Keychain.",
+        ));
+        alert.addButtonWithTitle(&NSString::from_str("Save"));
+        alert.addButtonWithTitle(&NSString::from_str("Cancel"));
+        let field = NSSecureTextField::initWithFrame(
+            NSSecureTextField::alloc(mtm),
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(340.0, 24.0)),
+        );
+        field.setPlaceholderString(Some(&NSString::from_str("sk-or-…")));
+        alert.setAccessoryView(Some(&field));
+        alert.window().setInitialFirstResponder(Some(&field));
+        if alert.runModal() != NSAlertFirstButtonReturn {
+            return Ok(false);
+        }
+        let key = Zeroizing::new(field.stringValue().to_string());
+        field.setStringValue(&NSString::from_str(""));
+        if key.trim().is_empty() {
+            continue;
+        }
+        credentials::set("OPENROUTER_API_KEY", &key)?;
+        return Ok(true);
+    }
+}
+
+/// Opens a folder in Finder, or a file in the default text editor since
+/// `.toml` often has no registered handler.
+pub fn open_path(path: &Path) -> Result<()> {
+    if path.is_dir() {
+        let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+        ensure!(
+            NSWorkspace::sharedWorkspace().openURL(&url),
+            "Could not open {}",
+            path.display()
+        );
+        return Ok(());
+    }
+    let status = std::process::Command::new("open")
+        .arg("-t")
+        .arg(path)
+        .status()
+        .context("Run open")?;
+    ensure!(status.success(), "Could not open {}", path.display());
+    Ok(())
+}
+
+pub fn open_url(url: &str) -> Result<()> {
+    let link = NSURL::URLWithString(&NSString::from_str(url)).context("Invalid URL")?;
+    ensure!(
+        NSWorkspace::sharedWorkspace().openURL(&link),
+        "Could not open {url}"
+    );
+    Ok(())
 }
 
 pub fn permission_status() -> String {
@@ -327,9 +453,17 @@ pub fn permission_status() -> String {
     )
 }
 
-pub fn autostart(enabled: bool, config: &Path) -> Result<()> {
+fn launch_agents() -> Result<std::path::PathBuf> {
     let home = std::env::var_os("HOME").context("HOME is not set")?;
-    let agents = Path::new(&home).join("Library/LaunchAgents");
+    Ok(Path::new(&home).join("Library/LaunchAgents"))
+}
+
+pub fn autostart_enabled() -> bool {
+    launch_agents().is_ok_and(|agents| agents.join("dev.yap.plist").is_file())
+}
+
+pub fn autostart(enabled: bool, config: &Path) -> Result<()> {
+    let agents = launch_agents()?;
     match std::fs::remove_file(agents.join("dev.whisper-bro.plist")) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -343,7 +477,17 @@ pub fn autostart(enabled: bool, config: &Path) -> Result<()> {
             Err(error) => return Err(error.into()),
         }
     }
-    let executable = std::env::current_exe()?;
+    let mise_data = std::env::var_os("MISE_DATA_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("XDG_DATA_HOME").map(|data| Path::new(&data).join("mise")))
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| Path::new(&home).join(".local/share/mise"))
+        });
+    let executable = autostart_executable(
+        &std::env::current_exe()?,
+        mise_data.as_deref(),
+        Path::is_file,
+    );
     let config = std::path::absolute(config)?;
     let xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>

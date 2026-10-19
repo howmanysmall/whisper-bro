@@ -29,6 +29,8 @@ mise run dev
 
 Get a key from [OpenRouter](https://openrouter.ai/settings/keys). Setup stores it in macOS Keychain or Windows Credential Manager. Pressing Enter at the key prompt keeps the stored key. The next prompt turns cleanup on with `y`, and pressing Enter there turns cleanup off. An `OPENROUTER_API_KEY` environment variable takes precedence over the stored key.
 
+The packaged app doesn't need a terminal: when no key is stored, it asks for one at launch, and **Set API key…** in the tray/menu-bar menu replaces it later without a restart. **Start at login** in the same menu toggles the login item, the same switch as `yap autostart enable` and `yap autostart disable`. When Yap is installed through mise, the login item launches mise's `yap` shim, so it survives `mise up`.
+
 Upgrading from Whisper Bro: Yap copies the stored key, `config.toml`, and the last dictation from the old locations the first time it runs, and it leaves the old files and key in place. Running `yap autostart enable` or `yap autostart disable` removes the old Whisper Bro login item, so you end up with a single entry.
 
 Click a text field, press **Ctrl+Alt+Space**, speak, then press the same shortcut again. **Escape** cancels recording or transcription. The tray/menu-bar menu has recording controls, recovery, and Quit. Leave the destination focused while the result finishes. If focus changes, recover it using **Copy last dictation**.
