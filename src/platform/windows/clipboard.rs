@@ -39,6 +39,20 @@ impl Drop for OpenClipboardGuard {
     }
 }
 
+/// Clipboard monitors hold the clipboard for a few milliseconds after every change, so retry before giving up.
+fn open_clipboard(owner: Option<HWND>) -> Result<OpenClipboardGuard> {
+    const ATTEMPTS: u32 = 10;
+    for attempt in 1..=ATTEMPTS {
+        if unsafe { OpenClipboard(owner) }.is_ok() {
+            return Ok(OpenClipboardGuard);
+        }
+        if attempt < ATTEMPTS {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    anyhow::bail!("Another app is holding the clipboard")
+}
+
 pub fn copy_text(text: &str) -> Result<()> {
     let _ole = Ole::new()?;
     let window = unsafe {
@@ -57,18 +71,22 @@ pub fn copy_text(text: &str) -> Result<()> {
             None,
         )?
     };
-    let result = write_text(Some(window), text, None);
+    let result = write_text(Some(window), text, None, false);
     unsafe {
         let _ = DestroyWindow(window);
     }
     result
 }
 
-fn write_text(owner: Option<HWND>, text: &str, expected_sequence: Option<u32>) -> Result<()> {
+fn write_text(
+    owner: Option<HWND>,
+    text: &str,
+    expected_sequence: Option<u32>,
+    exclude_from_history: bool,
+) -> Result<()> {
     let units: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
+    let _clipboard = open_clipboard(owner)?;
     unsafe {
-        OpenClipboard(owner).context("Another app is holding the clipboard")?;
-        let _clipboard = OpenClipboardGuard;
         if let Some(expected) = expected_sequence {
             ensure!(
                 GetClipboardSequenceNumber() == expected,
@@ -90,15 +108,61 @@ fn write_text(owner: Option<HWND>, text: &str, expected_sequence: Option<u32>) -
             return Err(error.into());
         }
     }
+    if exclude_from_history {
+        mark_private();
+    }
     Ok(())
 }
 
-pub fn paste(owner: HWND, text: &str, check_target: impl FnOnce() -> Result<()>) -> Result<()> {
+/// Asks clipboard monitors, Win+V history and cloud clipboard to skip the dictation. Needs the clipboard open.
+fn mark_private() {
+    for name in [
+        w!("ExcludeClipboardContentFromMonitorProcessing"),
+        w!("CanIncludeInClipboardHistory"),
+        w!("CanUploadToCloudClipboard"),
+    ] {
+        let format = unsafe { RegisterClipboardFormatW(name) };
+        if format == 0 {
+            let error = windows::core::Error::from_thread();
+            tracing::warn!(%error, "Could not register a clipboard privacy format");
+            continue;
+        }
+        if let Err(error) = set_zero(format) {
+            tracing::warn!(%error, "Could not mark the dictation private on the clipboard");
+        }
+    }
+}
+
+fn set_zero(format: u32) -> Result<()> {
+    unsafe {
+        let memory = GlobalAlloc(GMEM_MOVEABLE, std::mem::size_of::<u32>())?;
+        let pointer = GlobalLock(memory).cast::<u32>();
+        if pointer.is_null() {
+            let _ = GlobalFree(Some(memory));
+            anyhow::bail!("Could not allocate clipboard data");
+        }
+        pointer.write(0);
+        let _ = GlobalUnlock(memory);
+        // On success the clipboard owns the memory.
+        if let Err(error) = SetClipboardData(format, Some(HANDLE(memory.0))) {
+            let _ = GlobalFree(Some(memory));
+            return Err(error.into());
+        }
+    }
+    Ok(())
+}
+
+pub fn paste(
+    owner: HWND,
+    text: &str,
+    restore_after: Duration,
+    check_target: impl FnOnce() -> Result<()>,
+) -> Result<()> {
     let (initial_sequence, mut previous) = snapshot(owner)?;
-    write_text(Some(owner), text, Some(initial_sequence))?;
+    write_text(Some(owner), text, Some(initial_sequence), true)?;
     let sequence = unsafe { GetClipboardSequenceNumber() };
     let inserted = check_target().and_then(|()| paste_key());
-    std::thread::sleep(Duration::from_millis(200));
+    std::thread::sleep(restore_after);
     unsafe {
         if GetClipboardSequenceNumber() == sequence
             && let Err(error) = restore(owner, sequence, &mut previous)
@@ -145,9 +209,8 @@ impl Drop for Format {
 }
 
 fn snapshot(owner: HWND) -> Result<(u32, Vec<Format>)> {
+    let _clipboard = open_clipboard(Some(owner))?;
     unsafe {
-        OpenClipboard(Some(owner)).context("Another app is holding the clipboard")?;
-        let _clipboard = OpenClipboardGuard;
         let mut formats = Vec::new();
         let mut kind = 0;
         loop {
@@ -175,9 +238,8 @@ fn snapshot(owner: HWND) -> Result<(u32, Vec<Format>)> {
 }
 
 fn restore(owner: HWND, sequence: u32, formats: &mut [Format]) -> Result<()> {
+    let _clipboard = open_clipboard(Some(owner))?;
     unsafe {
-        OpenClipboard(Some(owner))?;
-        let _clipboard = OpenClipboardGuard;
         if GetClipboardSequenceNumber() != sequence {
             return Ok(());
         }
@@ -196,6 +258,8 @@ fn key(code: VIRTUAL_KEY, up: bool) -> INPUT {
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
                 wVk: code,
+                // RDP, Citrix and VMs forward scan codes and drop events without one.
+                wScan: unsafe { MapVirtualKeyW(u32::from(code.0), MAPVK_VK_TO_VSC) } as u16,
                 dwFlags: if up {
                     KEYEVENTF_KEYUP
                 } else {

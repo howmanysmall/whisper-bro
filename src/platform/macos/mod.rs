@@ -208,14 +208,14 @@ impl Desktop {
         })
     }
 
-    pub fn paste(&mut self, target: &Target, text: &str) -> Result<()> {
+    pub fn paste(&mut self, target: &Target, text: &str, restore_after: Duration) -> Result<()> {
         accessibility::wait_for_modifiers()?;
         let current = self.target()?;
         ensure!(
             current.pid == target.pid && current.element == target.element,
             "The destination changed while dictating"
         );
-        clipboard::paste(text, || {
+        clipboard::paste(text, restore_after, || {
             let current = self.target()?;
             ensure!(
                 current.pid == target.pid && current.element == target.element,

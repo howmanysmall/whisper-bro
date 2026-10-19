@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::{Result, ensure};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSPasteboardWriting};
-use objc2_foundation::{NSArray, NSString};
+use objc2_foundation::{NSArray, NSData, NSString};
 
 use super::accessibility;
 
@@ -17,7 +17,38 @@ pub fn copy_text(text: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn paste(text: &str, check_target: impl FnOnce() -> Result<()>) -> Result<()> {
+/// Writes the dictation marked transient and concealed (nspasteboard.org), so clipboard managers skip it.
+fn write_transient(board: &NSPasteboard, text: &str) -> Result<()> {
+    let item = NSPasteboardItem::new();
+    ensure!(
+        item.setString_forType(&NSString::from_str(text), unsafe { NSPasteboardTypeString }),
+        "Could not write to the clipboard"
+    );
+    let marker = NSData::new();
+    for kind in [
+        "org.nspasteboard.TransientType",
+        "org.nspasteboard.ConcealedType",
+    ] {
+        ensure!(
+            item.setData_forType(&marker, &NSString::from_str(kind)),
+            "Could not write to the clipboard"
+        );
+    }
+    board.clearContents();
+    ensure!(
+        board.writeObjects(&NSArray::from_retained_slice(&[
+            ProtocolObject::from_retained(item)
+        ])),
+        "Could not write to the clipboard"
+    );
+    Ok(())
+}
+
+pub fn paste(
+    text: &str,
+    restore_after: Duration,
+    check_target: impl FnOnce() -> Result<()>,
+) -> Result<()> {
     let board = NSPasteboard::generalPasteboard();
     let initial_change = board.changeCount();
     let mut snapshot: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = Vec::new();
@@ -40,10 +71,10 @@ pub fn paste(text: &str, check_target: impl FnOnce() -> Result<()>) -> Result<()
         board.changeCount() == initial_change,
         "The clipboard changed while preparing to paste"
     );
-    copy_text(text)?;
+    write_transient(&board, text)?;
     let our_change = board.changeCount();
     let inserted = check_target().and_then(|()| accessibility::paste_key());
-    std::thread::sleep(Duration::from_millis(200));
+    std::thread::sleep(restore_after);
     if board.changeCount() == our_change {
         board.clearContents();
         if !snapshot.is_empty() && !board.writeObjects(&NSArray::from_retained_slice(&snapshot)) {

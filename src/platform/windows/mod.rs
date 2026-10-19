@@ -256,7 +256,12 @@ impl Desktop {
         target(&self.automation)
     }
 
-    pub fn paste(&mut self, destination: &Target, text: &str) -> Result<()> {
+    pub fn paste(
+        &mut self,
+        destination: &Target,
+        text: &str,
+        restore_after: Duration,
+    ) -> Result<()> {
         let started = Instant::now();
         while modifiers_down() {
             ensure!(
@@ -266,7 +271,9 @@ impl Desktop {
             std::thread::sleep(Duration::from_millis(10));
         }
         self.check_target(destination)?;
-        clipboard::paste(self.window, text, || self.check_target(destination))
+        clipboard::paste(self.window, text, restore_after, || {
+            self.check_target(destination)
+        })
     }
 
     fn check_target(&self, destination: &Target) -> Result<()> {

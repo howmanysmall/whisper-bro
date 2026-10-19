@@ -27,7 +27,7 @@ pub trait Ui {
     fn notify(&mut self, message: &str);
     fn cue(&mut self, cue: Cue);
     fn cancel_shortcut(&mut self, enabled: bool) -> Result<()>;
-    fn paste(&mut self, target: &Self::Target, text: &str) -> Result<()>;
+    fn paste(&mut self, target: &Self::Target, text: &str, restore_after: Duration) -> Result<()>;
 }
 
 impl Ui for Desktop {
@@ -53,8 +53,8 @@ impl Ui for Desktop {
         Desktop::cancel_shortcut(self, enabled)
     }
 
-    fn paste(&mut self, target: &Target, text: &str) -> Result<()> {
-        Desktop::paste(self, target, text)
+    fn paste(&mut self, target: &Target, text: &str, restore_after: Duration) -> Result<()> {
+        Desktop::paste(self, target, text, restore_after)
     }
 }
 
@@ -341,7 +341,11 @@ impl<U: Ui> Controller<U> {
             self.report(&format!("Could not save recovery text: {error}"));
             return;
         }
-        match self.ui.paste(&current.target, &dictation.text) {
+        let restore_after = Duration::from_millis(self.config.paste_restore_ms);
+        match self
+            .ui
+            .paste(&current.target, &dictation.text, restore_after)
+        {
             Ok(()) => {
                 tracing::info!(
                     stop_to_paste_ms = current.stopped.map(|t| t.elapsed().as_millis()),

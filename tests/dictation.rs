@@ -141,6 +141,13 @@ fn invalid_shortcuts_and_misspelled_configuration_are_rejected() {
         ..Config::default()
     };
     assert!(config.validate().is_err());
+    for paste_restore_ms in [10, 10_000] {
+        let config = Config {
+            paste_restore_ms,
+            ..Config::default()
+        };
+        assert!(config.validate().is_err());
+    }
     assert!(toml::from_str::<Config>("finalize_timeout_ms = 4000").is_ok());
     assert!(
         !toml::to_string(&Config::default())

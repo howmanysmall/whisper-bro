@@ -53,7 +53,7 @@ impl Ui for FakeUi {
         Ok(())
     }
 
-    fn paste(&mut self, _target: &(), text: &str) -> Result<()> {
+    fn paste(&mut self, _target: &(), text: &str, _restore_after: Duration) -> Result<()> {
         self.events
             .push(Event::Paste(text.into(), self.recovery.exists()));
         self.paste_result
