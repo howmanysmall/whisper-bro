@@ -4,7 +4,12 @@ use super::*;
 use base64::Engine;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-async fn service(status: u16, delay: Duration) -> (String, tokio::task::JoinHandle<Vec<i16>>) {
+struct Received {
+    body: serde_json::Value,
+    samples: Vec<i16>,
+}
+
+async fn service(status: u16, delay: Duration) -> (String, tokio::task::JoinHandle<Received>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/transcribe", listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
@@ -44,13 +49,13 @@ async fn service(status: u16, delay: Duration) -> (String, tokio::task::JoinHand
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         tokio::time::sleep(delay).await;
-        let body = r#"{"text":"Keep the final word: café."}"#;
+        let reply = r#"{"text":"Keep the final word: café."}"#;
         let response = format!(
-            "HTTP/1.1 {status} Result\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
+            "HTTP/1.1 {status} Result\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+            reply.len()
         );
         let _ = socket.write_all(response.as_bytes()).await;
-        samples
+        Received { body, samples }
     });
     (url, task)
 }
@@ -66,7 +71,7 @@ async fn stopping_uploads_every_sample_including_the_final_frame() {
         .await
         .unwrap();
     assert_eq!(transcript.text, "Keep the final word: café.");
-    assert_eq!(server.await.unwrap(), vec![0, 32767, -32768, 1]);
+    assert_eq!(server.await.unwrap().samples, vec![0, 32767, -32768, 1]);
 }
 
 #[tokio::test]
@@ -103,5 +108,45 @@ async fn crossing_the_recording_limit_keeps_the_allowed_audio() {
         .await
         .unwrap();
     assert_eq!(transcript.text, "Keep the final word: café.");
-    assert_eq!(server.await.unwrap().len(), 16000);
+    assert_eq!(server.await.unwrap().samples.len(), 16000);
+}
+
+#[tokio::test]
+async fn vocabulary_language_and_model_reach_openrouter_as_sent() {
+    let (url, server) = service(200, Duration::ZERO).await;
+    let (tx, rx) = mpsc::channel(1);
+    tx.send(vec![0, 0]).await.unwrap();
+    drop(tx);
+    let config = Config {
+        vocabulary: vec![
+            "roblox-ts".into(),
+            "foo&model=other".into(),
+            "two words".into(),
+        ],
+        ..Config::default()
+    };
+    transcribe_at(&config, "test", 16000, rx, &url)
+        .await
+        .unwrap();
+    let body = server.await.unwrap().body;
+    let prompt = "roblox-ts, foo&model=other, two words";
+    assert_eq!(body["provider"]["options"]["groq"]["prompt"], prompt);
+    assert_eq!(
+        body["provider"]["options"]["deepinfra/us"]["prompt"],
+        prompt
+    );
+    assert_eq!(body["model"], config.transcription_model.as_str());
+    assert_eq!(body["language"], "en");
+}
+
+#[tokio::test]
+async fn an_empty_vocabulary_sends_no_provider_options() {
+    let (url, server) = service(200, Duration::ZERO).await;
+    let (tx, rx) = mpsc::channel(1);
+    tx.send(vec![0, 0]).await.unwrap();
+    drop(tx);
+    transcribe_at(&Config::default(), "test", 16000, rx, &url)
+        .await
+        .unwrap();
+    assert!(server.await.unwrap().body.get("provider").is_none());
 }

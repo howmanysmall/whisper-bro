@@ -15,7 +15,9 @@ pub struct Config {
     pub language: String,
     pub vocabulary: Vec<String>,
     pub max_recording_seconds: u64,
-    pub finalize_timeout_ms: u64,
+    /// Unused since the streaming path was removed; accepted so config files written by older `setup` runs still load.
+    #[serde(skip_serializing)]
+    pub finalize_timeout_ms: serde::de::IgnoredAny,
     pub cleanup: CleanupConfig,
     pub transcription_model: String,
     pub transcription_timeout_ms: u64,
@@ -47,7 +49,7 @@ impl Default for Config {
             language: "en".into(),
             vocabulary: Vec::new(),
             max_recording_seconds: 600,
-            finalize_timeout_ms: 4000,
+            finalize_timeout_ms: serde::de::IgnoredAny,
             cleanup: CleanupConfig::default(),
             transcription_model: "openai/whisper-large-v3-turbo".into(),
             transcription_timeout_ms: 60_000,
@@ -97,10 +99,6 @@ impl Config {
             "max_recording_seconds must be 1–3600"
         );
         ensure!(
-            (100..=30_000).contains(&self.finalize_timeout_ms),
-            "finalize_timeout_ms must be 100–30000"
-        );
-        ensure!(
             (100..=10_000).contains(&self.cleanup.timeout_ms),
             "cleanup.timeout_ms must be 100–10000"
         );
@@ -110,7 +108,7 @@ impl Config {
         );
         ensure!(
             self.vocabulary.len() <= 100,
-            "Keep vocabulary to at most 100 terms (the service also limits it to 500 tokens)"
+            "Keep vocabulary to at most 100 terms; the transcription provider truncates longer prompts"
         );
         ensure!(
             self.vocabulary.iter().all(|term| !term.trim().is_empty()),

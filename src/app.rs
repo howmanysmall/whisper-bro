@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use tokio::task::JoinHandle;
 
 use crate::{
@@ -54,7 +54,11 @@ pub fn run(config: Config, paths: Paths, credentials: Credentials) -> Result<()>
         .truncate(false)
         .write(true)
         .open(paths.data.join("instance.lock"))?;
-    fs2::FileExt::try_lock_exclusive(&lock).context("Yap is already running")?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => bail!("Yap is already running"),
+        Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+    }
     let runtime = runtime()?;
     let mut desktop = Desktop::new(&config.shortcut.parse()?)?;
     let client = reqwest::Client::builder()
@@ -148,7 +152,6 @@ pub fn run(config: Config, paths: Paths, credentials: Credentials) -> Result<()>
                                     )
                                     .await;
                                     tracing::info!(
-                                        connect_ms = transcript.connect_ms,
                                         finalize_ms = transcript.finalize_ms,
                                         cleanup_ms = cleanup_started.elapsed().as_millis(),
                                         cleanup = cleanup_status.label(),
@@ -284,29 +287,7 @@ pub fn run(config: Config, paths: Paths, credentials: Credentials) -> Result<()>
                         ),
                     }
                 }
-                Err(error) => {
-                    let mut message = error.message;
-                    if !error.partial.is_empty() {
-                        let partial = Dictation {
-                            text: error.partial.clone(),
-                            raw: error.partial,
-                            complete: false,
-                            cleanup: "disabled".into(),
-                            recorded_at_unix: SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs(),
-                        };
-                        match partial.save(&paths.recovery()) {
-                            Ok(()) => message
-                                .push_str(". Partial text is available in Copy last dictation"),
-                            Err(error) => {
-                                tracing::error!(%error, "Could not save partial dictation")
-                            }
-                        }
-                    }
-                    report(&mut desktop, &config, &message);
-                }
+                Err(error) => report(&mut desktop, &config, &error.message),
             }
         }
     }
