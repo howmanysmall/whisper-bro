@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use tokio::{runtime::Handle, sync::mpsc::Receiver, task::JoinHandle};
 
 use crate::{
@@ -17,7 +17,7 @@ use crate::{
     openrouter::ApiError,
     platform::{self, Command, Cue, Desktop, Status, Target},
     speech,
-    storage::{Dictation, Paths},
+    storage::{Dictation, Paths, write_private},
 };
 
 /// Transcribes a finished WAV, cleans the transcript and stamps the result.
@@ -28,7 +28,17 @@ pub async fn dictate(
     key: &str,
     wav: &[u8],
 ) -> Result<(Dictation, u128), ApiError> {
-    let transcript = speech::transcribe(client, config, key, wav).await?;
+    dictate_at(client, config, key, wav, speech::ENDPOINT).await
+}
+
+async fn dictate_at(
+    client: &reqwest::Client,
+    config: &Config,
+    key: &str,
+    wav: &[u8],
+    endpoint: &str,
+) -> Result<(Dictation, u128), ApiError> {
+    let transcript = speech::transcribe(client, config, key, wav, endpoint).await?;
     let cleanup_started = Instant::now();
     let (text, cleanup_status) =
         cleanup::clean(client, &config.cleanup, Some(key), &transcript.text).await;
@@ -133,6 +143,18 @@ impl<T> Drop for Session<T> {
 struct Completed {
     id: u64,
     result: Result<Dictation, ApiError>,
+    /// Whether a failed upload's WAV was saved for a retry.
+    kept: bool,
+}
+
+/// Where a session's audio comes from: the open microphone, or a recording
+/// that is already a complete WAV.
+enum Source {
+    Live {
+        audio: Receiver<Vec<u8>>,
+        sample_rate: u32,
+    },
+    Wav(Vec<u8>),
 }
 
 /// The dictation state machine: turns commands, microphone state and
@@ -143,6 +165,7 @@ pub struct Controller<U: Ui> {
     paths: Paths,
     credentials: Credentials,
     client: reqwest::Client,
+    endpoint: String,
     runtime: Handle,
     tx: mpsc::Sender<Completed>,
     rx: mpsc::Receiver<Completed>,
@@ -169,6 +192,7 @@ impl<U: Ui> Controller<U> {
             paths,
             credentials,
             client,
+            endpoint: speech::ENDPOINT.into(),
             runtime,
             tx,
             rx,
@@ -207,6 +231,13 @@ impl<U: Ui> Controller<U> {
                     }
                 }
             }
+            Command::RetryLast => {
+                if self.session.is_none()
+                    && let Err(error) = self.retry_last()
+                {
+                    self.report(&format!("{error:#}"));
+                }
+            }
             Command::TalkReleased if self.config.mode == RecordingMode::Hold => {
                 self.stop_recording();
             }
@@ -227,8 +258,6 @@ impl<U: Ui> Controller<U> {
                 }
             }
             Command::TalkReleased => {}
-            // Placeholder: the retry PR replaces this arm.
-            Command::RetryLast => {}
             Command::SetApiKey
             | Command::OpenConfig
             | Command::OpenLogs
@@ -284,7 +313,13 @@ impl<U: Ui> Controller<U> {
         let target = self.ui.target()?;
         let (capture, audio) = Capture::start(self.config.microphone.as_deref())?;
         self.ui.cancel_shortcut(true)?;
-        let task = self.spawn_transcription(id, audio, capture.sample_rate);
+        let task = self.spawn_transcription(
+            id,
+            Source::Live {
+                audio,
+                sample_rate: capture.sample_rate,
+            },
+        );
         Ok(Session {
             id,
             capture: Some(capture),
@@ -297,32 +332,64 @@ impl<U: Ui> Controller<U> {
         })
     }
 
-    fn spawn_transcription(
-        &mut self,
-        id: u64,
-        audio: Receiver<Vec<u8>>,
-        sample_rate: u32,
-    ) -> JoinHandle<()> {
+    /// Uploads the recording kept by a failed upload, as a session that is
+    /// already past recording.
+    fn retry_last(&mut self) -> Result<()> {
+        let wav = fs::read(self.paths.last_recording())
+            .map_err(|_| anyhow!("No failed recording to retry"))?;
+        let target = self.ui.target()?;
+        self.next_id += 1;
+        let id = self.next_id;
+        let now = Instant::now();
+        let task = self.spawn_transcription(id, Source::Wav(wav));
+        self.session = Some(Session {
+            id,
+            capture: None,
+            task,
+            target,
+            started: now,
+            stopped: Some(now),
+            incomplete: None,
+            ready_announced: true,
+        });
+        self.ui.status(Status::Processing, "Retrying upload");
+        Ok(())
+    }
+
+    fn spawn_transcription(&mut self, id: u64, source: Source) -> JoinHandle<()> {
         let credentials = self.credentials.clone();
         let config = self.config.clone();
         let client = self.client.clone();
+        let endpoint = self.endpoint.clone();
+        let paths = self.paths.clone();
         let tx = self.tx.clone();
         self.runtime.spawn(async move {
-            let pcm = speech::collect(audio, sample_rate, config.max_recording_seconds).await;
-            let wav = speech::wav(pcm, sample_rate);
-            let result = dictate(&client, &config, &credentials.openrouter, &wav)
+            let wav = match source {
+                Source::Live { audio, sample_rate } => speech::wav(
+                    speech::collect(audio, sample_rate, config.max_recording_seconds).await,
+                    sample_rate,
+                ),
+                Source::Wav(wav) => wav,
+            };
+            let result = dictate_at(&client, &config, &credentials.openrouter, &wav, &endpoint)
                 .await
                 .map(|(dictation, _)| dictation);
-            let _ = tx.send(Completed { id, result });
+            // Only failed uploads touch the disk, so a successful dictation
+            // never waits on a large synced write and its audio stays in memory.
+            let kept = result.is_err()
+                && write_private(&paths.last_recording(), &wav)
+                    .inspect_err(|error| {
+                        tracing::warn!(error = %format!("{error:#}"), "Could not keep the recording for a retry");
+                    })
+                    .is_ok();
+            let _ = tx.send(Completed { id, result, kept });
         })
     }
 
     /// Reacts to the microphone and the clock: announces readiness, stops on a
     /// fault or the length limit, and gives up on an upload that never ends.
     pub fn tick(&mut self, now: Instant) {
-        let deadline = Duration::from_millis(
-            self.config.transcription_timeout_ms + self.config.cleanup.timeout_ms + 8000,
-        );
+        let deadline = self.config.watchdog();
         let max_recording_seconds = self.config.max_recording_seconds;
         let Some(current) = &mut self.session else {
             return;
@@ -382,6 +449,12 @@ impl<U: Ui> Controller<U> {
         }
         let mut dictation = match completed.result {
             Ok(dictation) => dictation,
+            Err(error) if completed.kept => {
+                self.report(&format!(
+                    "{error}. Retry last recording from the tray or run `yap last --retry`"
+                ));
+                return;
+            }
             Err(error) => {
                 self.report(&error.to_string());
                 return;
@@ -410,6 +483,9 @@ impl<U: Ui> Controller<U> {
         if let Err(error) = dictation.save(&self.paths.recovery()) {
             self.report(&format!("Could not save recovery text: {error}"));
             return;
+        }
+        if let Err(error) = self.paths.discard_last_recording() {
+            tracing::warn!(%error, "Could not delete the kept recording");
         }
         let restore_after = Duration::from_millis(self.config.paste_restore_ms);
         match self

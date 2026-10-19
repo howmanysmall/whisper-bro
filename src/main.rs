@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::{Parser, Subcommand};
 use yap::{
     app, audio,
@@ -47,6 +47,9 @@ enum Command {
         copy: bool,
         #[arg(long)]
         raw: bool,
+        /// Upload the recording kept by a failed transcription, then show the result.
+        #[arg(long)]
+        retry: bool,
     },
     /// Transcribe a WAV file without inserting text into another app.
     Transcribe {
@@ -103,8 +106,12 @@ fn execute(cli: Cli) -> Result<()> {
             );
             Ok(())
         }
-        Command::Last { copy, raw } => {
-            let saved = Dictation::load(&paths.recovery())?;
+        Command::Last { copy, raw, retry } => {
+            let saved = if retry {
+                retry_last(&paths)?
+            } else {
+                Dictation::load(&paths.recovery())?
+            };
             if !saved.complete {
                 eprintln!("This dictation is incomplete; recording or transcription failed.");
             }
@@ -146,6 +153,27 @@ fn execute(cli: Cli) -> Result<()> {
             app::run(config, paths, credentials)
         }
     }
+}
+
+/// Transcribes the recording a failed upload left behind and saves the result
+/// as the last dictation.
+fn retry_last(paths: &Paths) -> Result<Dictation> {
+    let wav =
+        fs::read(paths.last_recording()).map_err(|_| anyhow!("No failed recording to retry"))?;
+    let config = Config::load(&paths.config)?;
+    let credentials = Credentials::load()?;
+    let (dictation, _) = app::runtime()?.block_on(app::dictate(
+        &reqwest::Client::new(),
+        &config,
+        &credentials.openrouter,
+        &wav,
+    ))?;
+    if dictation.text.is_empty() {
+        bail!("No speech detected in the kept recording");
+    }
+    dictation.save(&paths.recovery())?;
+    paths.discard_last_recording()?;
+    Ok(dictation)
 }
 
 fn doctor(paths: &Paths) -> Result<()> {

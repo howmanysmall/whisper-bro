@@ -124,6 +124,7 @@ yap doctor
 yap last
 yap last --raw
 yap last --copy
+yap last --retry
 yap autostart enable
 yap autostart disable
 yap --config /path/to/config.toml run
@@ -133,9 +134,9 @@ Use the installed executable when enabling login startup, so moving a developmen
 
 ## Recover a result
 
-Yap resamples the recording to 16 kHz mono before upload, which is what the transcription models use anyway. Recordings up to 25 MB upload as a plain file; longer ones fall back to a base64 JSON body. The utility saves each nonempty result before inserting it. If the microphone fails partway, the utility still transcribes and saves the audio recorded until then. It marks that result incomplete and doesn't insert it. `last` reports that condition on stderr. If transcription itself fails, the utility loses the recording and keeps the previous result. Cancelling discards the active recording.
+Yap resamples the recording to 16 kHz mono before upload, which is what the transcription models use anyway. Recordings up to 25 MB upload as a plain file; longer ones fall back to a base64 JSON body. The utility saves each nonempty result before inserting it. If the microphone fails partway, the utility still transcribes and saves the audio recorded until then. It marks that result incomplete and doesn't insert it. `last` reports that condition on stderr. If an upload fails with a server error, a dropped connection, or a timeout, the utility tries once more a second later. If that fails too, or OpenRouter rejects the request outright, the utility keeps the recording as `last-recording.wav` until the next successful dictation and keeps the previous result. Retry it with "Retry last recording" in the tray menu or `yap last --retry`. Cancelling discards the active recording.
 
-The recovery file contains both the speech transcript and the cleaned text. `doctor` prints its directory. The file stores only one result, and audio stays in memory. Delete `last-dictation.json` to remove the saved text. Logs contain timing and error diagnostics rather than transcript bodies or API keys.
+The recovery file contains both the speech transcript and the cleaned text. `doctor` prints its directory. The file stores only one result. Audio stays in memory unless its upload fails. Delete `last-dictation.json` to remove the saved text. Logs contain timing and error diagnostics rather than transcript bodies or API keys.
 
 Clipboard insertion snapshots the prior clipboard and restores it after a short paste delay, provided another app hasn't changed it in the meantime. Apps read the clipboard at different times. When you try a new app, check that the paste doesn't arrive late. The utility inserts text without pressing Enter.
 

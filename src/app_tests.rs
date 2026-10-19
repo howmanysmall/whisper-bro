@@ -9,6 +9,7 @@ use anyhow::anyhow;
 use zeroize::Zeroizing;
 
 use super::*;
+use crate::test_support::{REPLY, Service};
 
 #[derive(Debug, PartialEq)]
 enum Event {
@@ -143,6 +144,44 @@ impl Harness {
         });
     }
 
+    /// Starts a fake OpenRouter on the harness runtime and points the
+    /// controller at it.
+    fn serve(&mut self, status: u16, reply: &'static str) -> Service {
+        let service = self
+            .runtime
+            .block_on(Service::start(vec![(status, reply)], Duration::ZERO));
+        self.controller.endpoint = service.url.clone();
+        service
+    }
+
+    /// Installs a session that uploads `wav` for real.
+    fn transcribing(&mut self, wav: Vec<u8>) {
+        self.controller.next_id += 1;
+        let id = self.controller.next_id;
+        let task = self.controller.spawn_transcription(id, Source::Wav(wav));
+        self.controller.session = Some(Session {
+            id,
+            capture: None,
+            task,
+            target: (),
+            started: Instant::now(),
+            stopped: Some(Instant::now()),
+            incomplete: None,
+            ready_announced: true,
+        });
+    }
+
+    /// Waits for the active session's upload to end and applies its result.
+    fn finish(&mut self) {
+        let task = &mut self.controller.session.as_mut().unwrap().task;
+        self.runtime.block_on(task).unwrap();
+        self.controller.drain();
+    }
+
+    fn kept(&self) -> PathBuf {
+        self.controller.paths.last_recording()
+    }
+
     fn events(&self) -> &[Event] {
         &self.controller.ui.events
     }
@@ -169,6 +208,7 @@ fn finished(id: u64, text: &str) -> Completed {
             cleanup: "disabled".into(),
             recorded_at_unix: 0,
         }),
+        kept: false,
     }
 }
 
@@ -240,9 +280,7 @@ fn an_empty_transcript_leaves_the_previous_recovery_file_alone() {
 #[test]
 fn the_watchdog_releases_a_stuck_upload_only_after_the_deadline() {
     let mut harness = Harness::new();
-    let config = &harness.controller.config;
-    let deadline =
-        Duration::from_millis(config.transcription_timeout_ms + config.cleanup.timeout_ms + 8000);
+    let deadline = harness.controller.config.watchdog();
     let stopped = Instant::now();
     harness.uploading(1, Some(stopped), None);
 
@@ -443,4 +481,92 @@ fn a_cancelled_key_prompt_changes_nothing() {
         harness.controller.credentials.openrouter.as_str(),
         "test-key"
     );
+}
+
+/// A two-sample WAV, as the spawned task would build from the microphone.
+fn recording() -> Vec<u8> {
+    let mut pcm = vec![0; 44];
+    pcm.extend_from_slice(&[0, 0, 255, 127]);
+    speech::wav(pcm, 16000)
+}
+
+#[test]
+fn a_failed_upload_keeps_the_recording_for_retry() {
+    let mut harness = Harness::new();
+    let _service = harness.serve(402, r#"{"error":{"message":"Insufficient credits"}}"#);
+    harness.transcribing(recording());
+
+    harness.finish();
+
+    assert!(harness.controller.session.is_none());
+    assert_eq!(fs::read(harness.kept()).unwrap(), recording());
+    let (status, text) = harness.last_status().unwrap();
+    assert_eq!(status, Status::Error);
+    assert!(text.contains("no credits"), "{text}");
+    assert!(text.contains("yap last --retry"), "{text}");
+}
+
+#[test]
+fn retry_last_uploads_the_kept_recording_and_pastes_it() {
+    let mut harness = Harness::new();
+    let service = harness.serve(200, REPLY);
+    write_private(&harness.kept(), &recording()).unwrap();
+
+    assert!(harness.controller.handle(Command::RetryLast));
+    assert_eq!(
+        harness.last_status(),
+        Some((Status::Processing, "Retrying upload"))
+    );
+    harness.finish();
+
+    assert_eq!(service.requests()[0].samples, vec![0, 32767]);
+    assert!(
+        harness
+            .events()
+            .contains(&Event::Paste("Keep the final word: café.".into(), true))
+    );
+    assert_eq!(harness.last_status(), Some((Status::Idle, "Inserted")));
+    assert!(!harness.kept().exists());
+    assert_eq!(
+        Dictation::load(&harness.recovery()).unwrap().text,
+        "Keep the final word: café."
+    );
+}
+
+#[test]
+fn retry_last_with_nothing_kept_reports_instead_of_starting_a_session() {
+    let mut harness = Harness::new();
+
+    assert!(harness.controller.handle(Command::RetryLast));
+
+    assert!(harness.controller.session.is_none());
+    assert_eq!(
+        harness.last_status(),
+        Some((Status::Error, "No failed recording to retry"))
+    );
+}
+
+#[test]
+fn retry_last_is_ignored_while_a_dictation_is_in_progress() {
+    let mut harness = Harness::new();
+    write_private(&harness.kept(), &recording()).unwrap();
+    harness.uploading(7, Some(Instant::now()), None);
+
+    assert!(harness.controller.handle(Command::RetryLast));
+
+    assert_eq!(harness.controller.session.as_ref().map(|s| s.id), Some(7));
+    assert!(harness.events().is_empty());
+    assert!(harness.kept().exists());
+}
+
+#[test]
+fn a_successful_dictation_discards_the_kept_recording() {
+    let mut harness = Harness::new();
+    write_private(&harness.kept(), &recording()).unwrap();
+    harness.uploading(1, Some(Instant::now()), None);
+
+    harness.controller.complete(finished(1, "hello world"));
+
+    assert_eq!(harness.last_status(), Some((Status::Idle, "Inserted")));
+    assert!(!harness.kept().exists());
 }

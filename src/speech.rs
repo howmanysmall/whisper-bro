@@ -58,21 +58,22 @@ pub fn wav(mut pcm_with_prefix: Vec<u8>, sample_rate: u32) -> Vec<u8> {
     pcm_with_prefix
 }
 
+/// OpenRouter's transcription endpoint.
+pub const ENDPOINT: &str = "https://openrouter.ai/api/v1/audio/transcriptions";
+
+/// How long to wait before the one retry of a transient failure.
+const RETRY_DELAY: Duration = Duration::from_millis(if cfg!(test) { 10 } else { 1000 });
+
+/// Uploads the WAV to `endpoint` and returns the transcript, trying once more
+/// after a short pause when the first attempt fails transiently.
 pub async fn transcribe(
     client: &reqwest::Client,
     config: &Config,
     key: &str,
     wav: &[u8],
+    endpoint: &str,
 ) -> Result<Transcript, ApiError> {
-    transcribe_at(
-        client,
-        config,
-        key,
-        wav,
-        "https://openrouter.ai/api/v1/audio/transcriptions",
-        25 << 20,
-    )
-    .await
+    transcribe_at(client, config, key, wav, endpoint, 25 << 20).await
 }
 
 async fn transcribe_at(
@@ -89,6 +90,24 @@ async fn transcribe_at(
             finalize_ms: 0,
         });
     }
+    match attempt(client, config, key, wav, endpoint, multipart_limit).await {
+        Err(error) if error.retryable() => {
+            tracing::warn!(%error, "Transcription failed; retrying once");
+            tokio::time::sleep(RETRY_DELAY).await;
+            attempt(client, config, key, wav, endpoint, multipart_limit).await
+        }
+        result => result,
+    }
+}
+
+async fn attempt(
+    client: &reqwest::Client,
+    config: &Config,
+    key: &str,
+    wav: &[u8],
+    endpoint: &str,
+    multipart_limit: usize,
+) -> Result<Transcript, ApiError> {
     let started = Instant::now();
     let result = async {
         #[derive(Deserialize)]
