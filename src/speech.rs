@@ -78,9 +78,11 @@ async fn transcribe_at(
         let mut body = serde_json::json!({
             "model": config.transcription_model,
             "input_audio": { "data": base64::engine::general_purpose::STANDARD.encode(wav.into_inner()), "format": "wav" },
-            "language": config.language,
             "temperature": 0,
         });
+        if let Some(language) = config.language_code() {
+            body["language"] = language.into();
+        }
         if !config.vocabulary.is_empty() {
             let prompt = config.vocabulary.join(", ");
             body["provider"] = serde_json::json!({"options": {"groq": {"prompt": prompt}, "deepinfra/us": {"prompt": prompt}}});

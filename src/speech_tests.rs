@@ -209,3 +209,21 @@ async fn rejections_carry_openrouter_s_reason() {
     let key = upload_with_reply(401, r#"{"error":{"message":"No auth"}}"#).await;
     assert!(matches!(key, Err(ApiError::Unauthorized)));
 }
+
+#[tokio::test]
+async fn language_auto_omits_the_field() {
+    for language in ["auto", "AUTO", ""] {
+        let (url, server) = service(200, Duration::ZERO, REPLY).await;
+        let (tx, rx) = mpsc::channel(1);
+        tx.send(vec![0, 0]).await.unwrap();
+        drop(tx);
+        let config = Config {
+            language: language.into(),
+            ..Config::default()
+        };
+        transcribe_at(&reqwest::Client::new(), &config, "test", 16000, rx, &url)
+            .await
+            .unwrap();
+        assert!(server.await.unwrap().body.get("language").is_none());
+    }
+}

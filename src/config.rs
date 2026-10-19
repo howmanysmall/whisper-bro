@@ -38,6 +38,10 @@ pub struct CleanupConfig {
     pub enabled: bool,
     pub model: String,
     pub timeout_ms: u64,
+    /// Extra guidance for the cleanup model, appended to the built-in prompt.
+    pub instructions: Option<String>,
+    /// Use `instructions` instead of the built-in prompt.
+    pub replace_instructions: bool,
 }
 
 impl Default for Config {
@@ -64,7 +68,9 @@ impl Default for CleanupConfig {
         Self {
             enabled: false,
             model: "openai/gpt-oss-20b".into(),
-            timeout_ms: 1200,
+            timeout_ms: 8000,
+            instructions: None,
+            replace_instructions: false,
         }
     }
 }
@@ -87,7 +93,6 @@ impl Config {
             hotkey.key != crate::hotkey::Key::Escape,
             "Escape is reserved for cancel"
         );
-        ensure!(!self.language.trim().is_empty(), "language cannot be empty");
         ensure!(
             !self.transcription_model.trim().is_empty(),
             "transcription_model cannot be empty"
@@ -105,8 +110,15 @@ impl Config {
             "max_recording_seconds must be 1–3600"
         );
         ensure!(
-            (100..=10_000).contains(&self.cleanup.timeout_ms),
-            "cleanup.timeout_ms must be 100–10000"
+            (100..=60_000).contains(&self.cleanup.timeout_ms),
+            "cleanup.timeout_ms must be 100–60000"
+        );
+        ensure!(
+            self.cleanup
+                .instructions
+                .as_ref()
+                .is_none_or(|text| !text.trim().is_empty()),
+            "cleanup.instructions cannot be blank; remove it to use the built-in prompt"
         );
         ensure!(
             !self.cleanup.model.trim().is_empty(),
@@ -121,6 +133,12 @@ impl Config {
             "Vocabulary terms cannot be blank"
         );
         Ok(())
+    }
+
+    /// The language hint for transcription, or `None` to let the model detect it.
+    pub fn language_code(&self) -> Option<&str> {
+        let language = self.language.trim();
+        (!language.is_empty() && !language.eq_ignore_ascii_case("auto")).then_some(language)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
