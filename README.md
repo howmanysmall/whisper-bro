@@ -112,7 +112,7 @@ Use the installed executable when enabling login startup, so moving a developmen
 
 ## Recover a result
 
-The utility saves each nonempty result before inserting it. If the microphone fails partway, the utility still transcribes and saves the audio recorded until then. It marks that result incomplete and doesn't insert it. `last` reports that condition on stderr. If transcription itself fails, the utility loses the recording and keeps the previous result. Cancelling discards the active recording.
+Yap resamples the recording to 16 kHz mono before upload, which is what the transcription models use anyway. The utility saves each nonempty result before inserting it. If the microphone fails partway, the utility still transcribes and saves the audio recorded until then. It marks that result incomplete and doesn't insert it. `last` reports that condition on stderr. If transcription itself fails, the utility loses the recording and keeps the previous result. Cancelling discards the active recording.
 
 The recovery file contains both the speech transcript and the cleaned text. `doctor` prints its directory. The file stores only one result, and audio stays in memory. Delete `last-dictation.json` to remove the saved text. Logs contain timing and error diagnostics rather than transcript bodies or API keys.
 

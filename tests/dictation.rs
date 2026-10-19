@@ -22,6 +22,78 @@ fn audio_backpressure_is_reported_instead_of_silently_losing_words() {
     assert!(encoder.overflowed);
 }
 
+fn encode(rate: u32, input: &[f32]) -> Vec<f32> {
+    let (tx, mut rx) = mpsc::channel(input.len() + 1);
+    let mut encoder = Encoder::new(1, rate, tx);
+    encoder.push(input);
+    encoder.flush();
+    assert!(!encoder.overflowed);
+    let mut bytes = Vec::new();
+    while let Ok(frame) = rx.try_recv() {
+        bytes.extend(frame);
+    }
+    bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| f32::from(i16::from_le_bytes(*pair)) / 32768.0)
+        .collect()
+}
+
+fn sine(rate: u32, frequency: f32, amplitude: f32) -> Vec<f32> {
+    (0..rate)
+        .map(|i| amplitude * (std::f32::consts::TAU * frequency * i as f32 / rate as f32).sin())
+        .collect()
+}
+
+fn rms(samples: &[f32]) -> f32 {
+    (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+}
+
+#[test]
+fn a_48k_tone_survives_resampling_to_16k() {
+    let output = encode(48_000, &sine(48_000, 1_000.0, 0.5));
+    assert!(
+        (15_900..=16_000).contains(&output.len()),
+        "{}",
+        output.len()
+    );
+    let expected = 0.5 / 2f32.sqrt();
+    let measured = rms(&output);
+    assert!((measured - expected).abs() < expected * 0.05, "{measured}");
+    assert!(output.iter().all(|s| s.abs() <= 0.6));
+}
+
+#[test]
+fn audio_above_8k_is_removed_instead_of_aliasing() {
+    let input = sine(48_000, 10_000.0, 0.5);
+    let measured = rms(&encode(48_000, &input));
+    assert!(measured < rms(&input) * 0.01, "{measured}");
+}
+
+#[test]
+fn a_44_1k_recording_resamples_to_16k_with_the_right_length() {
+    let output = encode(44_100, &sine(44_100, 440.0, 0.5));
+    assert!(
+        (15_900..=16_000).contains(&output.len()),
+        "{}",
+        output.len()
+    );
+}
+
+#[test]
+fn rates_at_or_below_16k_pass_through_untouched() {
+    let (tx, _rx) = mpsc::channel(1);
+    assert_eq!(Encoder::new(1, 8_000, tx).output_rate(), 8_000);
+    let input: Vec<f32> = (0..800).map(|i| (i as f32 / 400.0) - 1.0).collect();
+    let output = encode(8_000, &input);
+    let direct: Vec<f32> = input
+        .iter()
+        .map(|s| ((s * 32768.0).round().clamp(-32768.0, 32767.0)) / 32768.0)
+        .collect();
+    assert_eq!(output, direct);
+}
+
 #[test]
 fn recovery_preserves_unicode_newlines_and_incomplete_status_across_restarts() {
     let directory = tempfile::tempdir().unwrap();
