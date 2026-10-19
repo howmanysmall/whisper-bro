@@ -1,21 +1,30 @@
 mod clipboard;
+mod icons;
 
 use std::{
+    ffi::c_void,
     path::Path,
-    sync::mpsc::{self, Receiver, Sender},
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        mpsc::{self, Receiver, Sender},
+    },
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use windows::{
     Win32::{
         Foundation::*,
+        Media::Audio::{PlaySoundW, SND_ALIAS, SND_ASYNC, SND_NODEFAULT},
+        Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
         System::{
             Com::{CLSCTX_INPROC_SERVER, CoCreateInstance},
             Console::*,
-            Diagnostics::Debug::MessageBeep,
             LibraryLoader::GetModuleHandleW,
             Registry::*,
+            Threading::{
+                GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+            },
         },
         UI::{
             Accessibility::{CUIAutomation8, IUIAutomation2, IUIAutomationElement},
@@ -40,14 +49,21 @@ const CANCEL_ID: i32 = 2;
 pub struct Desktop {
     window: HWND,
     icon: NOTIFYICONDATAW,
+    icons: [HICON; 4],
     receiver: Receiver<Command>,
-    _sender: Box<Sender<Command>>,
+    shared: Box<Shared>,
     automation: IUIAutomation2,
     cancel: bool,
     held: bool,
     key: i32,
     taskbar_created: u32,
     _ole: clipboard::Ole,
+}
+
+/// State the window procedure reads through `GWLP_USERDATA`.
+struct Shared {
+    sender: Sender<Command>,
+    status: AtomicU8,
 }
 
 pub struct Target {
@@ -60,7 +76,10 @@ impl Desktop {
     pub fn new(shortcut: &Hotkey) -> Result<Self> {
         let ole = clipboard::Ole::new()?;
         let (sender, receiver) = mpsc::channel();
-        let sender = Box::new(sender);
+        let shared = Box::new(Shared {
+            sender,
+            status: AtomicU8::new(Status::Idle as u8),
+        });
         unsafe {
             let automation: IUIAutomation2 =
                 CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)?;
@@ -91,25 +110,29 @@ impl Desktop {
                 Some(instance),
                 None,
             )?;
-            SetWindowLongPtrW(
-                window,
-                GWLP_USERDATA,
-                (&*sender as *const Sender<Command>) as isize,
-            );
+            let icons = match icons::status_icons() {
+                Ok(icons) => icons,
+                Err(error) => {
+                    let _ = DestroyWindow(window);
+                    return Err(error);
+                }
+            };
+            SetWindowLongPtrW(window, GWLP_USERDATA, (&*shared as *const Shared) as isize);
             let icon = NOTIFYICONDATAW {
                 cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
                 hWnd: window,
                 uID: 1,
                 uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
                 uCallbackMessage: TRAY_MESSAGE,
-                hIcon: LoadIconW(None, IDI_INFORMATION)?,
+                hIcon: icons[Status::Idle as usize],
                 ..Default::default()
             };
             let mut desktop = Self {
                 window,
                 icon,
+                icons,
                 receiver,
-                _sender: sender,
+                shared,
                 _ole: ole,
                 automation,
                 cancel: false,
@@ -211,6 +234,8 @@ impl Desktop {
             Status::Error => "Error",
         };
         wide_into(&format!("Yap · {label}\n{text}"), &mut self.icon.szTip);
+        self.icon.hIcon = self.icons[status as usize];
+        self.shared.status.store(status as u8, Ordering::Relaxed);
         unsafe {
             let _ = Shell_NotifyIconW(NIM_MODIFY, &self.icon);
         }
@@ -270,6 +295,9 @@ impl Drop for Desktop {
             }
             SetWindowLongPtrW(self.window, GWLP_USERDATA, 0);
             let _ = DestroyWindow(self.window);
+            for icon in self.icons {
+                let _ = DestroyIcon(icon);
+            }
         }
     }
 }
@@ -284,6 +312,16 @@ fn target(automation: &IUIAutomation2) -> Result<Target> {
             pid != std::process::id(),
             "Click the destination text field first"
         );
+        // SendInput into an elevated window fails without an error, so refuse up front.
+        if let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            let blocked = elevated(process).unwrap_or(false);
+            let _ = CloseHandle(process);
+            if blocked && !elevated(GetCurrentProcess())? {
+                bail!(
+                    "Windows blocked text insertion (the target may be running as administrator). Use Copy last dictation, or run Yap as administrator."
+                );
+            }
+        }
         let mut info = GUITHREADINFO {
             cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
             ..Default::default()
@@ -299,6 +337,25 @@ fn target(automation: &IUIAutomation2) -> Result<Target> {
     }
 }
 
+fn elevated(process: HANDLE) -> Result<bool> {
+    unsafe {
+        let mut token = HANDLE::default();
+        OpenProcessToken(process, TOKEN_QUERY, &mut token)?;
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut length = 0;
+        let result = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elevation as *mut TOKEN_ELEVATION as *mut c_void),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut length,
+        );
+        let _ = CloseHandle(token);
+        result?;
+        Ok(elevation.TokenIsElevated != 0)
+    }
+}
+
 fn modifiers_down() -> bool {
     [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
         .iter()
@@ -311,33 +368,60 @@ unsafe extern "system" fn window_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    let pointer = unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) } as *const Sender<Command>;
+    let pointer = unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) } as *const Shared;
     if !pointer.is_null() {
+        let shared = unsafe { &*pointer };
         let command = match message {
             WM_HOTKEY if wparam.0 == TALK_ID as usize => Some(Command::TalkPressed),
             WM_HOTKEY if wparam.0 == CANCEL_ID as usize => Some(Command::Cancel),
             TRAY_MESSAGE if matches!(lparam.0 as u32, WM_RBUTTONUP | WM_LBUTTONUP) => {
-                popup(window).ok().flatten()
+                popup(window, status(shared.status.load(Ordering::Relaxed)))
+                    .ok()
+                    .flatten()
             }
             WM_CLOSE => Some(Command::Quit),
             _ => None,
         };
         if let Some(command) = command {
-            let _ = unsafe { &*pointer }.send(command);
+            let _ = shared.sender.send(command);
             return LRESULT(0);
         }
     }
     unsafe { DefWindowProcW(window, message, wparam, lparam) }
 }
 
-fn popup(window: HWND) -> Result<Option<Command>> {
+fn status(value: u8) -> Status {
+    match value {
+        value if value == Status::Recording as u8 => Status::Recording,
+        value if value == Status::Processing as u8 => Status::Processing,
+        value if value == Status::Error as u8 => Status::Error,
+        _ => Status::Idle,
+    }
+}
+
+fn popup(window: HWND, status: Status) -> Result<Option<Command>> {
     unsafe {
         let previous = GetForegroundWindow();
         let menu = CreatePopupMenu()?;
         let result = (|| -> Result<Option<Command>> {
-            AppendMenuW(menu, MF_STRING, 1, w!("Start / stop recording"))?;
+            let enabled = |on: bool| if on { MF_STRING } else { MF_STRING | MF_GRAYED };
+            AppendMenuW(
+                menu,
+                enabled(status != Status::Processing),
+                1,
+                if status == Status::Recording {
+                    w!("Stop recording")
+                } else {
+                    w!("Start recording")
+                },
+            )?;
             AppendMenuW(menu, MF_STRING, 2, w!("Cancel dictation"))?;
-            AppendMenuW(menu, MF_STRING, 3, w!("Copy last dictation"))?;
+            AppendMenuW(
+                menu,
+                enabled(matches!(status, Status::Idle | Status::Error)),
+                3,
+                w!("Copy last dictation"),
+            )?;
             AppendMenuW(menu, MF_SEPARATOR, 0, None)?;
             AppendMenuW(menu, MF_STRING, 4, w!("Quit Yap"))?;
             let mut position = POINT::default();
@@ -393,11 +477,15 @@ fn wide_into<const N: usize>(text: &str, destination: &mut [u16; N]) {
 }
 
 pub fn cue(cue: Cue) {
+    let alias = match cue {
+        Cue::Start => w!("DeviceConnect"),
+        Cue::Stop => w!("DeviceDisconnect"),
+        Cue::Done => w!("SystemAsterisk"),
+        Cue::Error => w!("SystemHand"),
+        Cue::Warning => w!("SystemExclamation"),
+    };
     unsafe {
-        let _ = MessageBeep(match cue {
-            Cue::Error => MB_ICONWARNING,
-            _ => MB_OK,
-        });
+        let _ = PlaySoundW(alias, None, SND_ALIAS | SND_ASYNC | SND_NODEFAULT);
     }
 }
 
