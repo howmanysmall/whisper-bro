@@ -1,4 +1,3 @@
-title = "small-rules secret scanning"
 description = "Extends the built-in ruleset with the repo's known false positives. Passed explicitly with --config; betterleaks does not auto-discover this file."
 
 # The pre-push hook scans full history for a new ref, so every historical false
@@ -8,21 +7,6 @@ description = "Extends the built-in ruleset with the repo's known false positive
 # recently opened table, so a filter written after [extend] becomes
 # `extend.filter` and is silently dropped from the resolved config.
 filter = '''
-// `password` used as an identifier in a test fixture or a documented example,
-// holding the literal placeholder "secret". Not a credential.
-//
-// The rule test is listed at both its current path and its pre-move path
-// under `tests/`: a new ref is scanned across all history, so the older
-// commits still carry the finding under the old path.
-matchesAny(
-	attributes["path"],
-	[
-		`(^|/)src/rules/english/consistent-compound-words\.test\.ts$`,
-		`(^|/)tests/consistent-compound-words\.test\.ts$`,
-		`(^|/)documentation/src/data/generated/rule-relations\.review\.json$`,
-	],
-) && finding["secret"] == "secret"
-||
 // A lockfile entry whose dependency name ends in "password", such as
 // `'@inquirer/password': 5.1.1(@types/node@25.9.3)`. The rule captures the
 // resolved version string, which is not a credential.
