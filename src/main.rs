@@ -243,7 +243,13 @@ async fn transcribe_file(config: Config, credentials: Credentials, path: PathBuf
         }
         Instant::now()
     });
-    let result = speech::transcribe(&config, &credentials.openrouter, spec.sample_rate, rx).await;
+    let result = speech::transcribe(
+        &config,
+        &credentials.openrouter,
+        audio::output_rate(spec.sample_rate),
+        rx,
+    )
+    .await;
     if result.is_err() {
         producer.abort();
     }
