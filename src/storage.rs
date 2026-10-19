@@ -18,10 +18,37 @@ impl Paths {
     pub fn discover(config: Option<PathBuf>) -> Result<Self> {
         let dirs = ProjectDirs::from("dev", "yap", "yap")
             .context("Cannot locate the user configuration directory")?;
-        Ok(Self {
+        let migrate = config.is_none();
+        let paths = Self {
             config: config.unwrap_or_else(|| dirs.config_dir().join("config.toml")),
             data: dirs.data_local_dir().to_path_buf(),
-        })
+        };
+        if migrate
+            && let Some(old) = ProjectDirs::from("dev", "whisper-bro", "whisper-bro")
+            && let Err(error) = paths.migrate_from(&Self {
+                config: old.config_dir().join("config.toml"),
+                data: old.data_local_dir().to_path_buf(),
+            })
+        {
+            tracing::warn!(%error, "Could not carry over settings from Whisper Bro");
+        }
+        Ok(paths)
+    }
+
+    /// Copies the config and last dictation from `old` when the matching file
+    /// here does not exist yet. Existing files are never overwritten.
+    pub fn migrate_from(&self, old: &Self) -> Result<()> {
+        for (from, to) in [
+            (&old.config, &self.config),
+            (&old.recovery(), &self.recovery()),
+        ] {
+            if to.exists() || !from.is_file() {
+                continue;
+            }
+            let contents = fs::read(from).with_context(|| format!("Read {}", from.display()))?;
+            write_private(to, &contents)?;
+        }
+        Ok(())
     }
 
     pub fn recovery(&self) -> PathBuf {
@@ -48,6 +75,10 @@ impl Dictation {
             .context("Read saved dictation")
     }
 }
+
+#[cfg(test)]
+#[path = "storage_tests.rs"]
+mod tests;
 
 pub fn write_private(path: &Path, contents: &[u8]) -> Result<()> {
     let parent = path

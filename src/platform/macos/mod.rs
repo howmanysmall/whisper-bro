@@ -266,7 +266,13 @@ pub fn permission_status() -> String {
 
 pub fn autostart(enabled: bool, config: &Path) -> Result<()> {
     let home = std::env::var_os("HOME").context("HOME is not set")?;
-    let path = Path::new(&home).join("Library/LaunchAgents/dev.yap.plist");
+    let agents = Path::new(&home).join("Library/LaunchAgents");
+    match std::fs::remove_file(agents.join("dev.whisper-bro.plist")) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let path = agents.join("dev.yap.plist");
     if !enabled {
         match std::fs::remove_file(path) {
             Ok(()) => return Ok(()),

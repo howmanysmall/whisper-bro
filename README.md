@@ -17,6 +17,8 @@ mise run dev
 
 Get a key from [OpenRouter](https://openrouter.ai/settings/keys). Setup stores it in macOS Keychain or Windows Credential Manager. Pressing Enter at the key prompt keeps the stored key. The next prompt turns cleanup on with `y`, and pressing Enter there turns cleanup off. An `OPENROUTER_API_KEY` environment variable takes precedence over the stored key.
 
+Upgrading from Whisper Bro: Yap copies the stored key, `config.toml`, and the last dictation from the old locations the first time it runs, and it leaves the old files and key in place. Running `yap autostart enable` or `yap autostart disable` removes the old Whisper Bro login item, so you end up with a single entry.
+
 Click a text field, press **Ctrl+Alt+Space**, speak, then press the same shortcut again. **Escape** cancels recording or transcription. The tray/menu-bar menu has recording controls, recovery, and Quit. Leave the destination focused while the result finishes. If focus changes, recover it using **Copy last dictation**.
 
 On macOS, use the packaged app for a stable permission identity. Grant Microphone and Accessibility access to Yap in **System Settings → Privacy & Security**. Development runs may attribute permissions to the terminal instead. Restart after changing Accessibility permission.
