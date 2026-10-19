@@ -20,6 +20,7 @@ cpal = "0.16"
 directories = "6"
 hound = "3.5"
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
+notify = "8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 rpassword = "7"
 serde = { version = "1", features = ["derive"] }

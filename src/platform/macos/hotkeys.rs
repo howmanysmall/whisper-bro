@@ -97,6 +97,19 @@ impl Hotkeys {
         Ok(keys)
     }
 
+    /// Registers `shortcut` and only then releases the old one, so a
+    /// combination macOS refuses leaves the old shortcut working.
+    pub fn rebind(&mut self, shortcut: &Hotkey) -> Result<()> {
+        let talk = register(shortcut, 1)?;
+        if !self.talk.is_null() {
+            unsafe {
+                UnregisterEventHotKey(self.talk);
+            }
+        }
+        self.talk = talk;
+        Ok(())
+    }
+
     pub fn cancel(&mut self, enabled: bool) -> Result<()> {
         if enabled && self.cancel.is_null() {
             self.cancel = register(

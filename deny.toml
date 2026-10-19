@@ -31,6 +31,9 @@ allow = [
 	"Zlib",
 ]
 confidence-threshold = 0.9
+# notify, which watches config.toml, is a CC0 public-domain dedication like
+# the Unlicense above; allowed for that crate only.
+exceptions = [{ crate = "notify", allow = ["CC0-1.0"] }]
 
 [bans]
 # Duplicate versions are common in GUI dependency trees; report them without

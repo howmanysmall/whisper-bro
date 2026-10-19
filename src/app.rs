@@ -19,7 +19,7 @@ use crate::{
     cleanup,
     config::{Config, RecordingMode},
     credentials::Credentials,
-    hotkey::PressLatch,
+    hotkey::{Hotkey, PressLatch},
     openrouter::{self, ApiError, KeyInfo},
     platform::{self, Command, Cue, Desktop, Status, Target},
     preview::Segmenter,
@@ -89,6 +89,8 @@ pub trait Ui {
     /// Shows the live preview so far under the recording status. The next
     /// idle or error status clears it.
     fn preview(&mut self, text: &str);
+    /// Replaces the dictation shortcut. On failure the old one stays bound.
+    fn rebind(&mut self, shortcut: &Hotkey) -> Result<()>;
 }
 
 impl Ui for Desktop {
@@ -144,6 +146,10 @@ impl Ui for Desktop {
 
     fn preview(&mut self, text: &str) {
         Desktop::preview(self, text);
+    }
+
+    fn rebind(&mut self, shortcut: &Hotkey) -> Result<()> {
+        Desktop::rebind(self, shortcut)
     }
 }
 
@@ -309,6 +315,27 @@ pub struct Controller<U: Ui> {
     session: Option<Session<U::Target>>,
     next_id: u64,
     talk_key: PressLatch,
+    /// The config file's modification time and size when last read, so a
+    /// duplicate change event does not reload it twice.
+    config_stamp: Option<(SystemTime, u64)>,
+    config_changes_tx: mpsc::Sender<()>,
+    config_changes: mpsc::Receiver<()>,
+    /// When the latest change event arrived; the reload waits for an
+    /// editor's writes to settle.
+    config_changed: Option<Instant>,
+    /// A change saved during a dictation, applied once it ends.
+    pending_config: Option<Config>,
+    /// Kept alive for as long as the controller; dropping it stops the events.
+    _config_watcher: Option<notify::RecommendedWatcher>,
+}
+
+/// How long the config file must stay quiet before it is read.
+const CONFIG_SETTLE: Duration = Duration::from_millis(200);
+
+/// The config file's modification time and size, or `None` when it is missing.
+fn config_stamp(path: &Path) -> Option<(SystemTime, u64)> {
+    let metadata = fs::metadata(path).ok()?;
+    Some((metadata.modified().ok()?, metadata.len()))
 }
 
 impl<U: Ui> Controller<U> {
@@ -324,6 +351,8 @@ impl<U: Ui> Controller<U> {
             .build()?;
         let (tx, rx) = mpsc::channel();
         let (notices_tx, notices) = mpsc::channel();
+        let (config_changes_tx, config_changes) = mpsc::channel();
+        let config_stamp = config_stamp(&paths.config);
         Ok(Self {
             ui,
             config,
@@ -339,7 +368,132 @@ impl<U: Ui> Controller<U> {
             session: None,
             next_id: 0,
             talk_key: PressLatch::default(),
+            config_stamp,
+            config_changes_tx,
+            config_changes,
+            config_changed: None,
+            pending_config: None,
+            _config_watcher: None,
         })
+    }
+
+    /// Watches the config file's folder and signals `tick` whenever the
+    /// file is written, created, renamed into place or removed. Editors
+    /// often save through a temporary file, so events are matched on the
+    /// final file name.
+    pub fn watch_config(&mut self) -> Result<()> {
+        use notify::{EventKind, RecursiveMode, Watcher};
+
+        let folder = self
+            .paths
+            .config
+            .parent()
+            .context("The config file has no folder")?;
+        fs::create_dir_all(folder)?;
+        let name = self.paths.config.file_name().map(ToOwned::to_owned);
+        let changes = self.config_changes_tx.clone();
+        let mut watcher =
+            notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
+                Ok(event)
+                    if !matches!(event.kind, EventKind::Access(_))
+                        && event
+                            .paths
+                            .iter()
+                            .any(|path| path.file_name() == name.as_deref()) =>
+                {
+                    let _ = changes.send(());
+                }
+                Ok(_) => {}
+                Err(error) => tracing::warn!(%error, "Could not watch the config file"),
+            })
+            .context("Watch the config file")?;
+        watcher
+            .watch(folder, RecursiveMode::NonRecursive)
+            .with_context(|| format!("Watch {}", folder.display()))?;
+        self._config_watcher = Some(watcher);
+        Ok(())
+    }
+
+    /// Reloads the config file once its change events have settled, and
+    /// applies a change that waited for a dictation to end.
+    fn check_config(&mut self, now: Instant) {
+        if self.config_changes.try_iter().count() > 0 {
+            self.config_changed = Some(now);
+        }
+        if self.session.is_none()
+            && let Some(config) = self.pending_config.take()
+        {
+            self.apply_config(config);
+        }
+        if self
+            .config_changed
+            .is_some_and(|at| now.saturating_duration_since(at) >= CONFIG_SETTLE)
+        {
+            self.config_changed = None;
+            let stamp = config_stamp(&self.paths.config);
+            if stamp != self.config_stamp {
+                self.config_stamp = stamp;
+                self.reload_config();
+            }
+        }
+    }
+
+    /// Reads the config file again. A broken file is reported and ignored;
+    /// a change during a dictation waits until it ends.
+    fn reload_config(&mut self) {
+        let config = match Config::load(&self.paths.config) {
+            Ok(config) => config,
+            Err(error) => {
+                self.report(&format!(
+                    "config.toml has an error: {error:#}. Keeping the current settings"
+                ));
+                return;
+            }
+        };
+        if config == self.config {
+            // The tray toggles write the file too, and an edit may undo a pending one.
+            self.pending_config = None;
+        } else if self.session.is_some() {
+            tracing::info!("Settings changed during a dictation; applying them when it ends");
+            self.pending_config = Some(config);
+        } else {
+            self.apply_config(config);
+        }
+    }
+
+    fn apply_config(&mut self, mut config: Config) {
+        let mut rebind_error = None;
+        if config.shortcut != self.config.shortcut {
+            let current = self.config.shortcut.parse::<Hotkey>().ok();
+            let result = config.shortcut.parse::<Hotkey>().and_then(|shortcut| {
+                if current.as_ref() == Some(&shortcut) {
+                    Ok(())
+                } else {
+                    self.ui.rebind(&shortcut)
+                }
+            });
+            if let Err(error) = result {
+                rebind_error = Some(format!(
+                    "Could not switch the shortcut to {}: {error:#}. Keeping {}",
+                    config.shortcut, self.config.shortcut
+                ));
+                config.shortcut = self.config.shortcut.clone();
+            }
+        }
+        self.config = config;
+        self.ui.set_options(
+            self.config.cleanup.enabled,
+            self.config.sounds,
+            self.config.mode == RecordingMode::Hold,
+        );
+        tracing::info!(shortcut = %self.config.shortcut, mode = ?self.config.mode, "Settings reloaded");
+        match rebind_error {
+            Some(message) => self.report(&message),
+            None => self.ui.status(
+                Status::Idle,
+                &format!("Settings reloaded · {}", self.config.shortcut),
+            ),
+        }
     }
 
     pub fn ui_mut(&mut self) -> &mut U {
@@ -663,6 +817,7 @@ impl<U: Ui> Controller<U> {
     /// the recording time, stops on a fault, the length limit or a long
     /// silence, and gives up on an upload that never ends.
     pub fn tick(&mut self, now: Instant) {
+        self.check_config(now);
         let deadline = self.config.watchdog();
         let limit = Duration::from_secs(self.config.max_recording_seconds);
         let silence_limit = (self.config.mode == RecordingMode::Toggle
@@ -924,6 +1079,9 @@ pub fn run(config: Config, paths: Paths, credentials: Credentials) -> Result<()>
         runtime.handle().clone(),
     )?;
     controller.check_credits();
+    if let Err(error) = controller.watch_config() {
+        tracing::warn!(error = %format!("{error:#}"), "Config changes need a restart");
+    }
 
     'running: loop {
         let commands = controller.ui_mut().poll(Duration::from_millis(15))?;
