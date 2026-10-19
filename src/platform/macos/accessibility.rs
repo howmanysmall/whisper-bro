@@ -8,6 +8,7 @@ use anyhow::{Context, Result, ensure};
 use core_foundation::{
     base::{CFType, CFTypeRef, TCFType},
     boolean::CFBoolean,
+    data::CFData,
     dictionary::{CFDictionary, CFDictionaryRef},
     string::{CFString, CFStringRef},
 };
@@ -28,6 +29,29 @@ unsafe extern "C" {
     fn CGEventPost(tap: u32, event: CFTypeRef);
     fn CGEventSourceFlagsState(state: i32) -> u64;
 }
+
+#[link(name = "Carbon", kind = "framework")]
+unsafe extern "C" {
+    static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
+    fn TISCopyCurrentKeyboardLayoutInputSource() -> CFTypeRef;
+    fn TISGetInputSourceProperty(source: CFTypeRef, key: CFStringRef) -> CFTypeRef;
+    fn UCKeyTranslate(
+        layout: *const c_void,
+        key: u16,
+        action: u16,
+        modifiers: u32,
+        kbd_type: u32,
+        options: u32,
+        dead_key_state: *mut u32,
+        max_len: usize,
+        actual_len: *mut usize,
+        out: *mut u16,
+    ) -> i32;
+    fn LMGetKbdType() -> u8;
+}
+
+/// The US-layout position of V, used when the current layout cannot be read.
+const ANSI_V: u16 = 9;
 
 pub fn trusted() -> bool {
     unsafe { AXIsProcessTrusted() }
@@ -92,10 +116,53 @@ pub fn wait_for_modifiers() -> Result<()> {
     Ok(())
 }
 
+/// Finds the key that types "v" in the current layout, so Cmd+V still pastes on Dvorak, Colemak or AZERTY.
+fn paste_keycode() -> u16 {
+    let source = unsafe { TISCopyCurrentKeyboardLayoutInputSource() };
+    if source.is_null() {
+        return ANSI_V;
+    }
+    let source = unsafe { CFType::wrap_under_create_rule(source) };
+    let layout = unsafe {
+        TISGetInputSourceProperty(source.as_CFTypeRef(), kTISPropertyUnicodeKeyLayoutData)
+    };
+    // CJK input methods publish no Unicode layout.
+    if layout.is_null() {
+        return ANSI_V;
+    }
+    let layout = unsafe { CFData::wrap_under_get_rule(layout.cast()) };
+    let bytes = layout.bytes();
+    let kbd_type = u32::from(unsafe { LMGetKbdType() });
+    for code in 0..128u16 {
+        let mut dead = 0u32;
+        let mut len = 0usize;
+        let mut out = [0u16; 4];
+        let status = unsafe {
+            UCKeyTranslate(
+                bytes.as_ptr().cast(),
+                code,
+                0, // kUCKeyActionDown
+                0,
+                kbd_type,
+                1, // kUCKeyTranslateNoDeadKeysMask
+                &mut dead,
+                out.len(),
+                &mut len,
+                out.as_mut_ptr(),
+            )
+        };
+        if status == 0 && len == 1 && out[0] == u16::from(b'v') {
+            return code;
+        }
+    }
+    ANSI_V
+}
+
 pub fn paste_key() -> Result<()> {
     ensure!(trusted(), "Accessibility permission was revoked");
+    let code = paste_keycode();
     for down in [true, false] {
-        let pointer = unsafe { CGEventCreateKeyboardEvent(ptr::null(), 9, down) };
+        let pointer = unsafe { CGEventCreateKeyboardEvent(ptr::null(), code, down) };
         let pointer = std::ptr::NonNull::new(pointer.cast_mut())
             .context("Could not create paste keystroke")?;
         let event = unsafe { CFType::wrap_under_create_rule(pointer.as_ptr()) };

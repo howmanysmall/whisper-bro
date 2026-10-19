@@ -21,6 +21,7 @@ pub struct Config {
     pub cleanup: CleanupConfig,
     pub transcription_model: String,
     pub transcription_timeout_ms: u64,
+    pub paste_restore_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -53,6 +54,7 @@ impl Default for Config {
             cleanup: CleanupConfig::default(),
             transcription_model: "openai/whisper-large-v3-turbo".into(),
             transcription_timeout_ms: 60_000,
+            paste_restore_ms: 200,
         }
     }
 }
@@ -93,6 +95,10 @@ impl Config {
         ensure!(
             (1000..=120_000).contains(&self.transcription_timeout_ms),
             "transcription_timeout_ms must be 1000–120000"
+        );
+        ensure!(
+            (50..=5000).contains(&self.paste_restore_ms),
+            "paste_restore_ms must be 50–5000"
         );
         ensure!(
             (1..=3600).contains(&self.max_recording_seconds),

@@ -39,12 +39,15 @@ vocabulary = ["Luau", "roblox-ts", "T3 Chat"]
 max_recording_seconds = 600
 transcription_model = "openai/whisper-large-v3-turbo"
 transcription_timeout_ms = 60000
+paste_restore_ms = 200
 
 [cleanup]
 enabled = true
 model = "openai/gpt-oss-20b"
 timeout_ms = 1200
 ```
+
+`paste_restore_ms` is how long Yap waits after pasting before it restores the previous clipboard; raise it for apps that paste late.
 
 `toggle` mode is the default because holding a key through a long prompt gets old. `hold` records from press to release. The shortcut accepts Ctrl, Alt, Shift, Cmd/Win, letters, digits, Space, Backspace, and F1 to F12. Letter shortcuts refer to physical US-layout key positions on macOS.
 
