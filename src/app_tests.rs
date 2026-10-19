@@ -44,6 +44,7 @@ impl Ui for FakeUi {
             Cue::Stop => "stop",
             Cue::Done => "done",
             Cue::Error => "error",
+            Cue::Warning => "warning",
         }));
     }
 
