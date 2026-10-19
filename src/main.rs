@@ -11,7 +11,7 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand};
 use yap::{
-    app, audio, cleanup,
+    app, audio,
     config::Config,
     credentials::{self, Credentials},
     openrouter, platform, speech,
@@ -302,33 +302,23 @@ async fn transcribe_file(config: Config, credentials: Credentials, path: PathBuf
         }
         Instant::now()
     });
-    let client = reqwest::Client::new();
-    let result = speech::transcribe(
-        &client,
+    let sample_rate = audio::output_rate(spec.sample_rate);
+    let pcm = speech::collect(rx, sample_rate, config.max_recording_seconds).await;
+    let stopped = producer.await?;
+    let wav = speech::wav(pcm, sample_rate);
+    let (dictation, finalize_ms) = app::dictate(
+        &reqwest::Client::new(),
         &config,
         &credentials.openrouter,
-        audio::output_rate(spec.sample_rate),
-        rx,
+        &wav,
     )
-    .await;
-    if result.is_err() {
-        producer.abort();
-    }
-    let transcript = result?;
-    let stopped = producer.await?;
-    let (text, status) = cleanup::clean(
-        &client,
-        &config.cleanup,
-        Some(credentials.openrouter.as_str()),
-        &transcript.text,
-    )
-    .await;
-    writeln!(io::stdout(), "{text}")?;
+    .await?;
+    writeln!(io::stdout(), "{}", dictation.text)?;
     eprintln!(
         "finalize={}ms stop_to_result={}ms cleanup={}",
-        transcript.finalize_ms,
+        finalize_ms,
         stopped.elapsed().as_millis(),
-        status.label()
+        dictation.cleanup
     );
     Ok(())
 }

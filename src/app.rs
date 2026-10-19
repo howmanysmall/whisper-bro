@@ -18,6 +18,37 @@ use crate::{
     storage::{Dictation, Paths},
 };
 
+/// Transcribes a finished WAV, cleans the transcript and stamps the result.
+/// Also returns how long transcription took, in milliseconds.
+pub async fn dictate(
+    client: &reqwest::Client,
+    config: &Config,
+    key: &str,
+    wav: &[u8],
+) -> Result<(Dictation, u128), ApiError> {
+    let transcript = speech::transcribe(client, config, key, wav).await?;
+    let cleanup_started = Instant::now();
+    let (text, cleanup_status) =
+        cleanup::clean(client, &config.cleanup, Some(key), &transcript.text).await;
+    tracing::info!(
+        finalize_ms = transcript.finalize_ms,
+        cleanup_ms = cleanup_started.elapsed().as_millis(),
+        cleanup = cleanup_status.label(),
+        "Transcription finished"
+    );
+    let dictation = Dictation {
+        text,
+        raw: transcript.text,
+        complete: true,
+        cleanup: cleanup_status.label().into(),
+        recorded_at_unix: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+    Ok((dictation, transcript.finalize_ms))
+}
+
 /// The desktop surface the controller drives: tray status, sounds, the
 /// Escape shortcut and pasting into the focused application.
 pub trait Ui {
@@ -207,43 +238,11 @@ impl<U: Ui> Controller<U> {
         let client = self.client.clone();
         let tx = self.tx.clone();
         self.runtime.spawn(async move {
-            let result = match speech::transcribe(
-                &client,
-                &config,
-                &credentials.openrouter,
-                sample_rate,
-                audio,
-            )
-            .await
-            {
-                Ok(transcript) => {
-                    let cleanup_started = Instant::now();
-                    let (text, cleanup_status) = cleanup::clean(
-                        &client,
-                        &config.cleanup,
-                        Some(credentials.openrouter.as_str()),
-                        &transcript.text,
-                    )
-                    .await;
-                    tracing::info!(
-                        finalize_ms = transcript.finalize_ms,
-                        cleanup_ms = cleanup_started.elapsed().as_millis(),
-                        cleanup = cleanup_status.label(),
-                        "Transcription finished"
-                    );
-                    Ok(Dictation {
-                        text,
-                        raw: transcript.text,
-                        complete: true,
-                        cleanup: cleanup_status.label().into(),
-                        recorded_at_unix: SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs(),
-                    })
-                }
-                Err(error) => Err(error),
-            };
+            let pcm = speech::collect(audio, sample_rate, config.max_recording_seconds).await;
+            let wav = speech::wav(pcm, sample_rate);
+            let result = dictate(&client, &config, &credentials.openrouter, &wav)
+                .await
+                .map(|(dictation, _)| dictation);
             let _ = tx.send(Completed { id, result });
         })
     }
