@@ -13,8 +13,9 @@ use crate::{
     config::{Config, RecordingMode},
     credentials::Credentials,
     hotkey::PressLatch,
+    openrouter::ApiError,
     platform::{self, Command, Cue, Desktop, Status, Target},
-    speech::{self, SpeechFailure},
+    speech,
     storage::{Dictation, Paths},
 };
 
@@ -77,7 +78,7 @@ impl<T> Drop for Session<T> {
 
 struct Completed {
     id: u64,
-    result: Result<Dictation, SpeechFailure>,
+    result: Result<Dictation, ApiError>,
 }
 
 /// The dictation state machine: turns commands, microphone state and
@@ -105,7 +106,7 @@ impl<U: Ui> Controller<U> {
         runtime: Handle,
     ) -> Result<Self> {
         let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(2))
+            .connect_timeout(Duration::from_secs(5))
             .build()?;
         let (tx, rx) = mpsc::channel();
         Ok(Self {
@@ -208,6 +209,7 @@ impl<U: Ui> Controller<U> {
         let tx = self.tx.clone();
         self.runtime.spawn(async move {
             let result = match speech::transcribe(
+                &client,
                 &config,
                 &credentials.openrouter,
                 sample_rate,
@@ -313,7 +315,7 @@ impl<U: Ui> Controller<U> {
         let mut dictation = match completed.result {
             Ok(dictation) => dictation,
             Err(error) => {
-                self.report(&error.message);
+                self.report(&error.to_string());
                 return;
             }
         };
@@ -351,13 +353,24 @@ impl<U: Ui> Controller<U> {
                     stop_to_paste_ms = current.stopped.map(|t| t.elapsed().as_millis()),
                     "Text inserted"
                 );
-                let label = match dictation.cleanup.as_str() {
-                    "timed_out" => "Inserted · cleanup timed out",
-                    "unavailable" => "Inserted · cleanup unavailable",
-                    _ => "Inserted",
+                let (label, warning) = match dictation.cleanup.as_str() {
+                    "timed_out" => (
+                        "Inserted · cleanup timed out",
+                        Some("Inserted without cleanup: cleanup timed out"),
+                    ),
+                    "unavailable" => (
+                        "Inserted · cleanup unavailable",
+                        Some("Inserted without cleanup: cleanup was unavailable"),
+                    ),
+                    _ => ("Inserted", None),
                 };
                 self.ui.status(Status::Idle, label);
-                self.cue(Cue::Done);
+                if let Some(warning) = warning {
+                    self.ui.notify(warning);
+                    self.cue(Cue::Warning);
+                } else {
+                    self.cue(Cue::Done);
+                }
             }
             Err(error) => self.report(&format!(
                 "{error}. Use Copy last dictation to recover the text"

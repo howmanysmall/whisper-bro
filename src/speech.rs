@@ -3,20 +3,10 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use tokio::{sync::mpsc, time::timeout};
 
-use crate::config::Config;
-
-#[derive(Debug)]
-pub struct SpeechFailure {
-    pub message: String,
-}
-
-impl std::fmt::Display for SpeechFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for SpeechFailure {}
+use crate::{
+    config::Config,
+    openrouter::{self, ApiError},
+};
 
 pub struct Transcript {
     pub text: String,
@@ -24,12 +14,14 @@ pub struct Transcript {
 }
 
 pub async fn transcribe(
+    client: &reqwest::Client,
     config: &Config,
     key: &str,
     sample_rate: u32,
     audio: mpsc::Receiver<Vec<u8>>,
-) -> Result<Transcript, SpeechFailure> {
+) -> Result<Transcript, ApiError> {
     transcribe_at(
+        client,
         config,
         key,
         sample_rate,
@@ -40,14 +32,15 @@ pub async fn transcribe(
 }
 
 async fn transcribe_at(
+    client: &reqwest::Client,
     config: &Config,
     key: &str,
     sample_rate: u32,
     mut audio: mpsc::Receiver<Vec<u8>>,
     endpoint: &str,
-) -> Result<Transcript, SpeechFailure> {
+) -> Result<Transcript, ApiError> {
     use base64::Engine;
-    let failure = |message: String| SpeechFailure { message };
+    let invalid = |error: hound::Error| ApiError::Invalid(error.to_string());
     let mut pcm = Vec::new();
     let limit = sample_rate as u64 * config.max_recording_seconds * 2;
     while let Some(frame) = audio.recv().await {
@@ -72,11 +65,14 @@ async fn transcribe_at(
                     bits_per_sample: 16,
                     sample_format: hound::SampleFormat::Int,
                 },
-            )?;
+            )
+            .map_err(invalid)?;
             for sample in pcm.as_chunks::<2>().0 {
-                writer.write_sample(i16::from_le_bytes(*sample))?;
+                writer
+                    .write_sample(i16::from_le_bytes(*sample))
+                    .map_err(invalid)?;
             }
-            writer.finalize()?;
+            writer.finalize().map_err(invalid)?;
         }
         drop(pcm);
         let mut body = serde_json::json!({
@@ -93,28 +89,26 @@ async fn transcribe_at(
         struct Response {
             text: String,
         }
-        let response = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .build()?
+        let response = client
             .post(endpoint)
             .bearer_auth(key)
             .json(&body)
             .send()
+            .await?;
+        let response = openrouter::check(response)
             .await?
-            .error_for_status()?
             .json::<Response>()
             .await?;
-        Ok::<_, anyhow::Error>(response.text)
+        Ok::<_, ApiError>(response.text)
     };
     let text = timeout(
         Duration::from_millis(config.transcription_timeout_ms),
         result,
     )
     .await
-    .map_err(|_| failure("OpenRouter transcription timed out".into()))?
-    .map_err(|error| failure(format!("OpenRouter transcription failed: {error}")))?;
+    .map_err(|_| ApiError::Timeout)??;
     Ok(Transcript {
-        text,
+        text: text.trim().to_owned(),
         finalize_ms: stopped.elapsed().as_millis(),
     })
 }

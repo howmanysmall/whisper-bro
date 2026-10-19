@@ -4,12 +4,18 @@ use super::*;
 use base64::Engine;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+const REPLY: &str = r#"{"text":"Keep the final word: café."}"#;
+
 struct Received {
     body: serde_json::Value,
     samples: Vec<i16>,
 }
 
-async fn service(status: u16, delay: Duration) -> (String, tokio::task::JoinHandle<Received>) {
+async fn service(
+    status: u16,
+    delay: Duration,
+    reply: &'static str,
+) -> (String, tokio::task::JoinHandle<Received>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/transcribe", listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
@@ -49,7 +55,6 @@ async fn service(status: u16, delay: Duration) -> (String, tokio::task::JoinHand
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         tokio::time::sleep(delay).await;
-        let reply = r#"{"text":"Keep the final word: café."}"#;
         let response = format!(
             "HTTP/1.1 {status} Result\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
             reply.len()
@@ -62,14 +67,21 @@ async fn service(status: u16, delay: Duration) -> (String, tokio::task::JoinHand
 
 #[tokio::test]
 async fn stopping_uploads_every_sample_including_the_final_frame() {
-    let (url, server) = service(200, Duration::ZERO).await;
+    let (url, server) = service(200, Duration::ZERO, REPLY).await;
     let (tx, rx) = mpsc::channel(2);
     tx.send(vec![0, 0, 255, 127]).await.unwrap();
     tx.send(vec![0, 128, 1, 0]).await.unwrap();
     drop(tx);
-    let transcript = transcribe_at(&Config::default(), "test", 16000, rx, &url)
-        .await
-        .unwrap();
+    let transcript = transcribe_at(
+        &reqwest::Client::new(),
+        &Config::default(),
+        "test",
+        16000,
+        rx,
+        &url,
+    )
+    .await
+    .unwrap();
     assert_eq!(transcript.text, "Keep the final word: café.");
     assert_eq!(server.await.unwrap().samples, vec![0, 32767, -32768, 1]);
 }
@@ -77,7 +89,7 @@ async fn stopping_uploads_every_sample_including_the_final_frame() {
 #[tokio::test]
 async fn rejected_and_stalled_uploads_never_become_successful_dictations() {
     for (status, delay) in [(402, Duration::ZERO), (200, Duration::from_secs(5))] {
-        let (url, server) = service(status, delay).await;
+        let (url, server) = service(status, delay, REPLY).await;
         let (tx, rx) = mpsc::channel(1);
         tx.send(vec![0, 0]).await.unwrap();
         drop(tx);
@@ -86,7 +98,7 @@ async fn rejected_and_stalled_uploads_never_become_successful_dictations() {
             ..Config::default()
         };
         assert!(
-            transcribe_at(&config, "test", 16000, rx, &url)
+            transcribe_at(&reqwest::Client::new(), &config, "test", 16000, rx, &url)
                 .await
                 .is_err()
         );
@@ -96,7 +108,7 @@ async fn rejected_and_stalled_uploads_never_become_successful_dictations() {
 
 #[tokio::test]
 async fn crossing_the_recording_limit_keeps_the_allowed_audio() {
-    let (url, server) = service(200, Duration::ZERO).await;
+    let (url, server) = service(200, Duration::ZERO, REPLY).await;
     let (tx, rx) = mpsc::channel(1);
     tx.send(vec![0; 32004]).await.unwrap();
     drop(tx);
@@ -104,7 +116,7 @@ async fn crossing_the_recording_limit_keeps_the_allowed_audio() {
         max_recording_seconds: 1,
         ..Config::default()
     };
-    let transcript = transcribe_at(&config, "test", 16000, rx, &url)
+    let transcript = transcribe_at(&reqwest::Client::new(), &config, "test", 16000, rx, &url)
         .await
         .unwrap();
     assert_eq!(transcript.text, "Keep the final word: café.");
@@ -113,7 +125,7 @@ async fn crossing_the_recording_limit_keeps_the_allowed_audio() {
 
 #[tokio::test]
 async fn vocabulary_language_and_model_reach_openrouter_as_sent() {
-    let (url, server) = service(200, Duration::ZERO).await;
+    let (url, server) = service(200, Duration::ZERO, REPLY).await;
     let (tx, rx) = mpsc::channel(1);
     tx.send(vec![0, 0]).await.unwrap();
     drop(tx);
@@ -125,7 +137,7 @@ async fn vocabulary_language_and_model_reach_openrouter_as_sent() {
         ],
         ..Config::default()
     };
-    transcribe_at(&config, "test", 16000, rx, &url)
+    transcribe_at(&reqwest::Client::new(), &config, "test", 16000, rx, &url)
         .await
         .unwrap();
     let body = server.await.unwrap().body;
@@ -141,12 +153,59 @@ async fn vocabulary_language_and_model_reach_openrouter_as_sent() {
 
 #[tokio::test]
 async fn an_empty_vocabulary_sends_no_provider_options() {
-    let (url, server) = service(200, Duration::ZERO).await;
+    let (url, server) = service(200, Duration::ZERO, REPLY).await;
     let (tx, rx) = mpsc::channel(1);
     tx.send(vec![0, 0]).await.unwrap();
     drop(tx);
-    transcribe_at(&Config::default(), "test", 16000, rx, &url)
+    transcribe_at(
+        &reqwest::Client::new(),
+        &Config::default(),
+        "test",
+        16000,
+        rx,
+        &url,
+    )
+    .await
+    .unwrap();
+    assert!(server.await.unwrap().body.get("provider").is_none());
+}
+
+async fn upload_with_reply(status: u16, reply: &'static str) -> Result<Transcript, ApiError> {
+    let (url, server) = service(status, Duration::ZERO, reply).await;
+    let (tx, rx) = mpsc::channel(1);
+    tx.send(vec![0, 0]).await.unwrap();
+    drop(tx);
+    let result = transcribe_at(
+        &reqwest::Client::new(),
+        &Config::default(),
+        "test",
+        16000,
+        rx,
+        &url,
+    )
+    .await;
+    server.abort();
+    result
+}
+
+#[tokio::test]
+async fn whitespace_only_transcripts_are_empty() {
+    let transcript = upload_with_reply(200, r#"{"text":"  \n"}"#).await.unwrap();
+    assert_eq!(transcript.text, "");
+}
+
+#[tokio::test]
+async fn transcripts_lose_whisper_s_leading_space() {
+    let transcript = upload_with_reply(200, r#"{"text":" Hello there. "}"#)
         .await
         .unwrap();
-    assert!(server.await.unwrap().body.get("provider").is_none());
+    assert_eq!(transcript.text, "Hello there.");
+}
+
+#[tokio::test]
+async fn rejections_carry_openrouter_s_reason() {
+    let credits = upload_with_reply(402, r#"{"error":{"message":"Insufficient credits"}}"#).await;
+    assert!(matches!(credits, Err(ApiError::NoCredits)));
+    let key = upload_with_reply(401, r#"{"error":{"message":"No auth"}}"#).await;
+    assert!(matches!(key, Err(ApiError::Unauthorized)));
 }

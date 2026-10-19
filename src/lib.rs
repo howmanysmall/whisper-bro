@@ -4,6 +4,7 @@ pub mod cleanup;
 pub mod config;
 pub mod credentials;
 pub mod hotkey;
+pub mod openrouter;
 pub mod platform;
 pub mod speech;
 pub mod storage;

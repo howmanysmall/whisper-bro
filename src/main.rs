@@ -243,7 +243,9 @@ async fn transcribe_file(config: Config, credentials: Credentials, path: PathBuf
         }
         Instant::now()
     });
+    let client = reqwest::Client::new();
     let result = speech::transcribe(
+        &client,
         &config,
         &credentials.openrouter,
         audio::output_rate(spec.sample_rate),
@@ -255,7 +257,6 @@ async fn transcribe_file(config: Config, credentials: Credentials, path: PathBuf
     }
     let transcript = result?;
     let stopped = producer.await?;
-    let client = reqwest::Client::new();
     let (text, status) = cleanup::clean(
         &client,
         &config.cleanup,
