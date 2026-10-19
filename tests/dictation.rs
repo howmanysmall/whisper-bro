@@ -234,3 +234,63 @@ fn login_items_launch_the_mise_shim_instead_of_a_versioned_install() {
         );
     }
 }
+
+fn tone_then_silence(tone_seconds: f32, silence_seconds: f32) -> Encoder {
+    let (tx, _rx) = mpsc::channel(1000);
+    let mut encoder = Encoder::new(1, 16_000, tx);
+    // A sine with peak 0.1·√2 has an RMS of 0.1, i.e. −20 dBFS.
+    let amplitude = 0.1 * 2f32.sqrt();
+    let tone: Vec<f32> = (0..(16_000.0 * tone_seconds) as usize)
+        .map(|i| amplitude * (std::f32::consts::TAU * 440.0 * i as f32 / 16_000.0).sin())
+        .collect();
+    encoder.push(&tone);
+    encoder.push(&vec![0.0f32; (16_000.0 * silence_seconds) as usize]);
+    encoder
+}
+
+#[test]
+fn a_second_of_silence_is_not_speech() {
+    let encoder = tone_then_silence(0.0, 1.0);
+    assert!(!encoder.heard_speech());
+    assert_eq!(encoder.silent_for(), std::time::Duration::from_secs(1));
+}
+
+#[test]
+fn speech_is_heard_and_the_silence_after_it_is_timed() {
+    let encoder = tone_then_silence(0.5, 0.0);
+    assert!(encoder.heard_speech());
+    assert_eq!(encoder.silent_for(), std::time::Duration::ZERO);
+
+    let encoder = tone_then_silence(0.5, 2.0);
+    assert!(encoder.heard_speech());
+    let silent = encoder.silent_for().as_secs_f32();
+    assert!((1.9..=2.1).contains(&silent), "{silent}");
+}
+
+#[test]
+fn background_hiss_below_minus_45_dbfs_is_not_speech() {
+    let (tx, _rx) = mpsc::channel(1000);
+    let mut encoder = Encoder::new(2, 48_000, tx);
+    // RMS 0.003 is about −50 dBFS.
+    let hiss: Vec<f32> = (0..96_000)
+        .map(|i| if i % 4 < 2 { 0.003 } else { -0.003 })
+        .collect();
+    encoder.push(&hiss);
+    assert!(!encoder.heard_speech());
+}
+
+#[test]
+fn silence_timeouts_are_limited_to_ten_minutes() {
+    for (silence_timeout_seconds, valid) in [(0, true), (30, true), (600, true), (601, false)] {
+        let config = Config {
+            silence_timeout_seconds,
+            ..Config::default()
+        };
+        assert_eq!(
+            config.validate().is_ok(),
+            valid,
+            "{silence_timeout_seconds}"
+        );
+    }
+    assert_eq!(Config::default().silence_timeout_seconds, 30);
+}

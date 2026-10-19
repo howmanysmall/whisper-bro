@@ -9,6 +9,9 @@ pub const BUFFER_FRAMES: usize = 500;
 /// Transcription models resample to 16 kHz internally, so anything faster only inflates uploads.
 pub const TARGET_RATE: u32 = 16_000;
 
+/// RMS of a 100 ms window above which the microphone is taken to hear speech: −45 dBFS.
+const SPEECH_RMS: f32 = 0.005_623_413;
+
 /// The rate the encoder emits for a given input rate. Slower inputs pass through; they're never upsampled.
 pub fn output_rate(input: u32) -> u32 {
     if input > TARGET_RATE {
@@ -145,6 +148,22 @@ impl Capture {
             .has_data
     }
 
+    /// Whether any 100 ms window so far was louder than −45 dBFS.
+    pub fn heard_speech(&self) -> bool {
+        self.encoder
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .heard_speech()
+    }
+
+    /// How much audio has arrived since the last loud window, or since the start.
+    pub fn silent_for(&self) -> std::time::Duration {
+        self.encoder
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .silent_for()
+    }
+
     pub fn stop(mut self) -> Result<()> {
         // Drop the stream before flushing so no callback can append after the tail.
         self.stream.take();
@@ -192,6 +211,13 @@ pub struct Encoder {
     pub overflowed: bool,
     last_data: std::time::Instant,
     has_data: bool,
+    input_rate: u32,
+    window_frames: usize,
+    window_energy: f32,
+    window_count: usize,
+    heard_speech: bool,
+    /// Mono input frames since the last loud window ended, or since the start.
+    quiet_frames: u64,
 }
 
 impl Encoder {
@@ -210,11 +236,41 @@ impl Encoder {
             overflowed: false,
             last_data: std::time::Instant::now(),
             has_data: false,
+            input_rate: sample_rate.max(1),
+            window_frames: (sample_rate as usize / 10).max(1),
+            window_energy: 0.0,
+            window_count: 0,
+            heard_speech: false,
+            quiet_frames: 0,
         }
     }
 
     pub fn output_rate(&self) -> u32 {
         self.output_rate
+    }
+
+    /// Whether any 100 ms window so far was louder than −45 dBFS.
+    pub fn heard_speech(&self) -> bool {
+        self.heard_speech
+    }
+
+    /// How much audio has been pushed since the last loud window, or since the start.
+    pub fn silent_for(&self) -> std::time::Duration {
+        std::time::Duration::from_secs_f64(self.quiet_frames as f64 / f64::from(self.input_rate))
+    }
+
+    fn measure(&mut self, mono: f32) {
+        self.quiet_frames += 1;
+        self.window_energy += mono * mono;
+        self.window_count += 1;
+        if self.window_count == self.window_frames {
+            if (self.window_energy / self.window_count as f32).sqrt() > SPEECH_RMS {
+                self.heard_speech = true;
+                self.quiet_frames = 0;
+            }
+            self.window_energy = 0.0;
+            self.window_count = 0;
+        }
     }
 
     pub fn push<T: cpal::Sample>(&mut self, samples: &[T])
@@ -233,6 +289,7 @@ impl Encoder {
                 let mono = (self.channel_sum / self.channels as f32).clamp(-1.0, 1.0);
                 self.channel_count = 0;
                 self.channel_sum = 0.0;
+                self.measure(mono);
                 let pending = &mut self.pending;
                 let mut quantize = |value: f32| {
                     let pcm = (value * 32768.0).round().clamp(-32768.0, 32767.0) as i16;

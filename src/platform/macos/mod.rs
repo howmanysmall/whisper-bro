@@ -20,7 +20,7 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSApplication, NSApplicationActivationPolicy, NSColor,
-    NSControlStateValueOff, NSControlStateValueOn, NSEventMask, NSImage,
+    NSControlStateValue, NSControlStateValueOff, NSControlStateValueOn, NSEventMask, NSImage,
     NSImageSymbolConfiguration, NSMenu, NSMenuItem, NSSecureTextField, NSSound,
     NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSWorkspace,
 };
@@ -66,6 +66,12 @@ define_class!(
         fn open_config(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::OpenConfig); }
         #[unsafe(method(openLogs:))]
         fn open_logs(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::OpenLogs); }
+        #[unsafe(method(toggleCleanup:))]
+        fn toggle_cleanup(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::ToggleCleanup); }
+        #[unsafe(method(toggleSounds:))]
+        fn toggle_sounds(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::ToggleSounds); }
+        #[unsafe(method(toggleMode:))]
+        fn toggle_mode(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::ToggleMode); }
         #[unsafe(method(toggleAutostart:))]
         fn toggle_autostart(&self, _: Option<&AnyObject>) { let _ = self.ivars().sender.send(Command::ToggleAutostart); }
         #[unsafe(method(openReleases:))]
@@ -83,6 +89,9 @@ pub struct Desktop {
     copy: Retained<NSMenuItem>,
     retry: Retained<NSMenuItem>,
     autostart: Retained<NSMenuItem>,
+    cleanup: Retained<NSMenuItem>,
+    sounds: Retained<NSMenuItem>,
+    hold: Retained<NSMenuItem>,
     _target: Retained<MenuTarget>,
     keys: hotkeys::Hotkeys,
     hud: hud::Hud,
@@ -143,6 +152,14 @@ impl Desktop {
             sel!(openConfig:),
         ));
         menu.addItem(&menu_item(mtm, &target, "Open log folder", sel!(openLogs:)));
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+        let cleanup = menu_item(mtm, &target, "Clean up transcript", sel!(toggleCleanup:));
+        menu.addItem(&cleanup);
+        let sounds = menu_item(mtm, &target, "Play sounds", sel!(toggleSounds:));
+        menu.addItem(&sounds);
+        let hold = menu_item(mtm, &target, "Hold to talk", sel!(toggleMode:));
+        menu.addItem(&hold);
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
         let autostart = menu_item(mtm, &target, "Start at login", sel!(toggleAutostart:));
         menu.addItem(&autostart);
         menu.addItem(&menu_item(
@@ -170,6 +187,9 @@ impl Desktop {
             copy,
             retry,
             autostart,
+            cleanup,
+            sounds,
+            hold,
             _target: target,
             keys,
             hud,
@@ -236,11 +256,13 @@ impl Desktop {
     }
 
     pub fn set_autostart(&mut self, enabled: bool) {
-        self.autostart.setState(if enabled {
-            NSControlStateValueOn
-        } else {
-            NSControlStateValueOff
-        });
+        self.autostart.setState(check_state(enabled));
+    }
+
+    pub fn set_options(&mut self, cleanup: bool, sounds: bool, hold: bool) {
+        self.cleanup.setState(check_state(cleanup));
+        self.sounds.setState(check_state(sounds));
+        self.hold.setState(check_state(hold));
     }
 
     pub fn notify(&mut self, message: &str) {
@@ -321,6 +343,14 @@ fn status_title(status: Status) -> &'static str {
         Status::Recording => "● REC",
         Status::Processing => "…",
         Status::Error => "!",
+    }
+}
+
+fn check_state(on: bool) -> NSControlStateValue {
+    if on {
+        NSControlStateValueOn
+    } else {
+        NSControlStateValueOff
     }
 }
 

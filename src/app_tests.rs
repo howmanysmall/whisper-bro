@@ -23,11 +23,15 @@ enum Event {
     OpenPath(PathBuf),
     OpenUrl(String),
     SetAutostart(bool),
+    CopyText(String),
+    /// Cleanup, sounds and hold-to-talk checkmarks.
+    SetOptions(bool, bool, bool),
 }
 
 struct FakeUi {
     events: Vec<Event>,
     paste_result: Result<(), String>,
+    copy_result: Result<(), String>,
     /// What the key prompt answers: true as if the user saved a key.
     prompt_result: bool,
     recovery: PathBuf,
@@ -71,6 +75,11 @@ impl Ui for FakeUi {
             .map_err(|message| anyhow!(message))
     }
 
+    fn copy_text(&mut self, text: &str) -> Result<()> {
+        self.events.push(Event::CopyText(text.into()));
+        self.copy_result.clone().map_err(|message| anyhow!(message))
+    }
+
     fn prompt_api_key(&mut self) -> Result<bool> {
         self.events.push(Event::PromptApiKey);
         Ok(self.prompt_result)
@@ -88,6 +97,50 @@ impl Ui for FakeUi {
 
     fn set_autostart(&mut self, enabled: bool) {
         self.events.push(Event::SetAutostart(enabled));
+    }
+
+    fn set_options(&mut self, cleanup: bool, sounds: bool, hold: bool) {
+        self.events.push(Event::SetOptions(cleanup, sounds, hold));
+    }
+}
+
+/// A microphone that reports fixed readings; dropping it closes `audio`,
+/// as stopping a real capture does.
+struct FakeMic {
+    heard_speech: bool,
+    silent_for: Duration,
+    _audio: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
+}
+
+impl FakeMic {
+    fn new(heard_speech: bool, silent_for: Duration) -> Self {
+        Self {
+            heard_speech,
+            silent_for,
+            _audio: None,
+        }
+    }
+}
+
+impl Microphone for FakeMic {
+    fn is_ready(&self) -> bool {
+        true
+    }
+
+    fn fault(&self) -> Option<String> {
+        None
+    }
+
+    fn heard_speech(&self) -> bool {
+        self.heard_speech
+    }
+
+    fn silent_for(&self) -> Duration {
+        self.silent_for
+    }
+
+    fn stop(self: Box<Self>) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -108,6 +161,7 @@ impl Harness {
         let ui = FakeUi {
             events: Vec::new(),
             paste_result: Ok(()),
+            copy_result: Ok(()),
             prompt_result: false,
             recovery: paths.recovery(),
         };
@@ -141,6 +195,7 @@ impl Harness {
             stopped,
             incomplete: incomplete.map(Into::into),
             ready_announced: true,
+            shown_second: None,
         });
     }
 
@@ -168,7 +223,50 @@ impl Harness {
             stopped: Some(Instant::now()),
             incomplete: None,
             ready_announced: true,
+            shown_second: None,
         });
+    }
+
+    /// Installs a session that is still recording from `mic`, started at
+    /// `started`. With `upload`, the mic feeds a real upload of `recording()`.
+    fn recording(&mut self, mut mic: FakeMic, started: Instant, upload: bool) {
+        self.controller.next_id += 1;
+        let id = self.controller.next_id;
+        let task = if upload {
+            let (audio_tx, audio) = tokio::sync::mpsc::channel(4);
+            audio_tx.try_send(vec![0, 0, 255, 127]).unwrap();
+            mic._audio = Some(audio_tx);
+            self.controller.spawn_transcription(
+                id,
+                Source::Live {
+                    audio,
+                    sample_rate: 16000,
+                },
+            )
+        } else {
+            self.runtime.spawn(async {})
+        };
+        self.controller.session = Some(Session {
+            id,
+            capture: Some(Box::new(mic)),
+            task,
+            target: (),
+            started,
+            stopped: None,
+            incomplete: None,
+            ready_announced: false,
+            shown_second: None,
+        });
+    }
+
+    fn statuses(&self) -> Vec<(Status, &str)> {
+        self.events()
+            .iter()
+            .filter_map(|event| match event {
+                Event::Status(status, text) => Some((*status, text.as_str())),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Waits for the active session's upload to end and applies its result.
@@ -333,6 +431,7 @@ fn a_result_from_an_earlier_session_is_ignored() {
 fn a_paste_failure_keeps_the_recovery_file_and_says_so() {
     let mut harness = Harness::new();
     harness.controller.ui.paste_result = Err("The destination changed while dictating".into());
+    harness.controller.ui.copy_result = Err("The clipboard is busy".into());
     harness.uploading(1, Some(Instant::now()), None);
 
     harness.controller.complete(finished(1, "important words"));
@@ -370,7 +469,7 @@ fn escape_is_released_when_recording_stops_not_when_the_upload_ends() {
     let mut harness = Harness::new();
     harness.uploading(1, Some(Instant::now()), None);
 
-    harness.controller.stop_recording();
+    harness.controller.stop_recording("Finishing");
     assert!(harness.events().is_empty());
     assert!(harness.controller.session.is_some());
 
@@ -569,4 +668,338 @@ fn a_successful_dictation_discards_the_kept_recording() {
 
     assert_eq!(harness.last_status(), Some((Status::Idle, "Inserted")));
     assert!(!harness.kept().exists());
+}
+
+#[test]
+fn a_paste_failure_puts_the_text_on_the_clipboard() {
+    let mut harness = Harness::new();
+    harness.controller.ui.paste_result = Err("The destination changed while dictating".into());
+    harness.uploading(1, Some(Instant::now()), None);
+
+    harness.controller.complete(finished(1, "important words"));
+
+    assert!(
+        harness
+            .events()
+            .contains(&Event::CopyText("important words".into()))
+    );
+    let (status, text) = harness.last_status().unwrap();
+    assert_eq!(status, Status::Error);
+    assert!(text.contains("on your clipboard"), "{text}");
+}
+
+#[test]
+fn copy_last_dictation_goes_through_the_clipboard() {
+    let mut harness = Harness::new();
+    finished(1, "saved words")
+        .result
+        .unwrap()
+        .save(&harness.recovery())
+        .unwrap();
+
+    harness.controller.handle(Command::CopyLast);
+
+    assert!(
+        harness
+            .events()
+            .contains(&Event::CopyText("saved words".into()))
+    );
+    assert_eq!(
+        harness.last_status(),
+        Some((Status::Idle, "Last dictation copied"))
+    );
+}
+
+#[test]
+fn recording_labels_count_minutes_and_warn_before_the_limit() {
+    let limit = Duration::from_secs(600);
+    assert_eq!(
+        recording_label(Duration::from_millis(42_900), limit),
+        "Recording 0:42 · Escape cancels"
+    );
+    assert_eq!(
+        recording_label(Duration::from_secs(575), limit),
+        "Recording 9:35 · stops at 10:00"
+    );
+    assert_eq!(
+        recording_label(Duration::from_secs(569), limit),
+        "Recording 9:29 · Escape cancels"
+    );
+}
+
+#[test]
+fn the_recording_status_updates_once_per_elapsed_second() {
+    let mut harness = Harness::new();
+    let started = Instant::now();
+    harness.recording(FakeMic::new(true, Duration::ZERO), started, false);
+
+    for millis in [0, 300, 999, 1000, 1500, 2100, 2900] {
+        harness
+            .controller
+            .tick(started + Duration::from_millis(millis));
+    }
+
+    assert_eq!(
+        harness.statuses(),
+        [
+            (Status::Recording, "Recording 0:00 · Escape cancels"),
+            (Status::Recording, "Recording 0:01 · Escape cancels"),
+            (Status::Recording, "Recording 0:02 · Escape cancels"),
+        ]
+    );
+    assert_eq!(
+        harness
+            .events()
+            .iter()
+            .filter(|e| **e == Event::Cue("start"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn a_long_silence_stops_a_toggle_recording() {
+    let mut harness = Harness::new();
+    let started = Instant::now();
+    harness.recording(FakeMic::new(true, Duration::from_secs(30)), started, false);
+
+    harness.controller.tick(started + Duration::from_secs(29));
+    assert!(
+        harness
+            .controller
+            .session
+            .as_ref()
+            .unwrap()
+            .capture
+            .is_some()
+    );
+
+    harness.controller.tick(started + Duration::from_secs(30));
+
+    let session = harness.controller.session.as_ref().unwrap();
+    assert!(session.capture.is_none());
+    assert_eq!(
+        harness.last_status(),
+        Some((Status::Processing, "Stopped after 30 s of silence"))
+    );
+}
+
+#[test]
+fn silence_never_stops_hold_to_talk_or_a_disabled_timeout() {
+    for (mode, timeout) in [(RecordingMode::Hold, 30), (RecordingMode::Toggle, 0)] {
+        let mut harness = Harness::new();
+        harness.controller.config.mode = mode;
+        harness.controller.config.silence_timeout_seconds = timeout;
+        let started = Instant::now();
+        harness.recording(FakeMic::new(true, Duration::from_secs(120)), started, false);
+
+        harness.controller.tick(started + Duration::from_secs(120));
+
+        assert!(
+            harness
+                .controller
+                .session
+                .as_ref()
+                .unwrap()
+                .capture
+                .is_some(),
+            "{mode:?} {timeout}"
+        );
+    }
+}
+
+#[test]
+fn a_recording_without_speech_is_never_uploaded() {
+    let mut harness = Harness::new();
+    let service = harness.serve(200, REPLY);
+    harness.recording(FakeMic::new(false, Duration::ZERO), Instant::now(), true);
+
+    harness.controller.handle(Command::Toggle);
+    harness
+        .runtime
+        .block_on(async { tokio::time::sleep(Duration::from_millis(200)).await });
+    harness.controller.drain();
+
+    assert!(service.requests().is_empty());
+    assert!(harness.controller.session.is_none());
+    assert!(
+        !harness
+            .events()
+            .iter()
+            .any(|e| matches!(e, Event::Paste(..)))
+    );
+    assert!(!harness.recovery().exists());
+    assert!(harness.events().contains(&Event::CancelShortcut(false)));
+    assert_eq!(
+        harness.last_status(),
+        Some((Status::Idle, "No speech detected"))
+    );
+}
+
+#[test]
+fn a_silent_toggle_recording_that_times_out_is_dropped_too() {
+    let mut harness = Harness::new();
+    let service = harness.serve(200, REPLY);
+    let started = Instant::now();
+    harness.recording(FakeMic::new(false, Duration::from_secs(30)), started, true);
+
+    harness.controller.tick(started + Duration::from_secs(30));
+    harness
+        .runtime
+        .block_on(async { tokio::time::sleep(Duration::from_millis(200)).await });
+    harness.controller.drain();
+
+    assert!(service.requests().is_empty());
+    assert!(harness.controller.session.is_none());
+    assert_eq!(
+        harness.last_status(),
+        Some((Status::Idle, "No speech detected"))
+    );
+}
+
+#[test]
+fn a_recording_with_speech_is_uploaded_and_pasted() {
+    let mut harness = Harness::new();
+    let service = harness.serve(200, REPLY);
+    harness.recording(FakeMic::new(true, Duration::ZERO), Instant::now(), true);
+
+    harness.controller.handle(Command::Toggle);
+    assert_eq!(
+        harness.last_status(),
+        Some((Status::Processing, "Finishing"))
+    );
+    harness.finish();
+
+    assert_eq!(service.requests()[0].samples, vec![0, 32767]);
+    assert!(
+        harness
+            .events()
+            .contains(&Event::Paste("Keep the final word: café.".into(), true))
+    );
+}
+
+fn credits(remaining: Option<f64>) -> Result<KeyInfo, ApiError> {
+    Ok(KeyInfo {
+        limit_remaining: remaining,
+        ..KeyInfo::default()
+    })
+}
+
+#[test]
+fn a_low_balance_warns_at_startup() {
+    let mut harness = Harness::new();
+
+    harness.controller.announce_credits(credits(Some(0.42)));
+
+    assert_eq!(
+        harness.last_status(),
+        Some((Status::Idle, "Ready · $0.42 credits · Ctrl+Alt+Space"))
+    );
+    assert!(harness.events().contains(&Event::Notify(
+        "OpenRouter credits are low: $0.42 left".into()
+    )));
+    assert!(harness.events().contains(&Event::Cue("warning")));
+}
+
+#[test]
+fn a_healthy_balance_shows_the_amount_without_a_warning() {
+    let mut harness = Harness::new();
+
+    harness.controller.announce_credits(credits(Some(12.5)));
+
+    assert_eq!(
+        harness.events(),
+        [Event::Status(
+            Status::Idle,
+            "Ready · $12.50 credits · Ctrl+Alt+Space".into()
+        )]
+    );
+}
+
+#[test]
+fn a_key_without_a_limit_or_an_unreachable_server_keeps_the_plain_ready_line() {
+    for result in [credits(None), Err(ApiError::Timeout)] {
+        let mut harness = Harness::new();
+
+        harness.controller.announce_credits(result);
+
+        assert_eq!(
+            harness.events(),
+            [Event::Status(Status::Idle, "Ready · Ctrl+Alt+Space".into())]
+        );
+    }
+}
+
+#[test]
+fn a_rejected_key_is_announced_with_the_error_cue() {
+    let mut harness = Harness::new();
+
+    harness
+        .controller
+        .announce_credits(Err(ApiError::Unauthorized));
+
+    assert!(harness.events().contains(&Event::Notify(
+        "OpenRouter rejected the API key. Choose Set API key… in the tray".into()
+    )));
+    assert!(harness.events().contains(&Event::Cue("error")));
+}
+
+#[test]
+fn credits_arriving_mid_dictation_leave_its_status_alone() {
+    let mut harness = Harness::new();
+    harness.uploading(1, Some(Instant::now()), None);
+
+    harness.controller.announce_credits(credits(Some(5.0)));
+
+    assert!(harness.events().is_empty(), "{:?}", harness.events());
+}
+
+#[test]
+fn tray_toggles_rewrite_the_config_file() {
+    let mut harness = Harness::new();
+    let path = harness.controller.paths.config.clone();
+
+    assert!(harness.controller.handle(Command::ToggleCleanup));
+
+    let written: Config = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(written.cleanup.enabled);
+    assert!(
+        harness
+            .events()
+            .contains(&Event::SetOptions(true, true, false))
+    );
+    assert_eq!(harness.last_status(), Some((Status::Idle, "Cleanup on")));
+
+    harness.controller.handle(Command::ToggleSounds);
+    harness.controller.handle(Command::ToggleMode);
+
+    let written: Config = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(!written.sounds);
+    assert_eq!(written.mode, RecordingMode::Hold);
+    assert!(
+        harness
+            .events()
+            .contains(&Event::SetOptions(true, false, true))
+    );
+    assert_eq!(harness.last_status(), Some((Status::Idle, "Hold to talk")));
+}
+
+#[test]
+fn toggles_are_ignored_while_dictating() {
+    let mut harness = Harness::new();
+    harness.uploading(1, Some(Instant::now()), None);
+
+    for command in [
+        Command::ToggleCleanup,
+        Command::ToggleSounds,
+        Command::ToggleMode,
+    ] {
+        assert!(harness.controller.handle(command));
+    }
+
+    assert!(harness.events().is_empty(), "{:?}", harness.events());
+    assert!(!harness.controller.paths.config.exists());
+    assert!(!harness.controller.config.cleanup.enabled);
+    assert!(harness.controller.config.sounds);
+    assert_eq!(harness.controller.config.mode, RecordingMode::Toggle);
 }

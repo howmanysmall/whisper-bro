@@ -14,7 +14,7 @@ use crate::{
     config::{Config, RecordingMode},
     credentials::Credentials,
     hotkey::PressLatch,
-    openrouter::ApiError,
+    openrouter::{self, ApiError, KeyInfo},
     platform::{self, Command, Cue, Desktop, Status, Target},
     speech,
     storage::{Dictation, Paths, write_private},
@@ -62,8 +62,8 @@ async fn dictate_at(
 }
 
 /// The desktop surface the controller drives: tray status, sounds, the
-/// Escape shortcut, pasting into the focused application, and the tray
-/// menu's key prompt, file shortcuts and login-item checkmark.
+/// Escape shortcut, pasting into the focused application, the clipboard,
+/// and the tray menu's key prompt, file shortcuts and checkmarks.
 pub trait Ui {
     type Target;
     fn target(&self) -> Result<Self::Target>;
@@ -72,11 +72,13 @@ pub trait Ui {
     fn cue(&mut self, cue: Cue);
     fn cancel_shortcut(&mut self, enabled: bool) -> Result<()>;
     fn paste(&mut self, target: &Self::Target, text: &str, restore_after: Duration) -> Result<()>;
+    fn copy_text(&mut self, text: &str) -> Result<()>;
     /// Asks for and stores the API key. Returns false when cancelled.
     fn prompt_api_key(&mut self) -> Result<bool>;
     fn open_path(&mut self, path: &Path) -> Result<()>;
     fn open_url(&mut self, url: &str) -> Result<()>;
     fn set_autostart(&mut self, enabled: bool);
+    fn set_options(&mut self, cleanup: bool, sounds: bool, hold: bool);
 }
 
 impl Ui for Desktop {
@@ -106,6 +108,10 @@ impl Ui for Desktop {
         Desktop::paste(self, target, text, restore_after)
     }
 
+    fn copy_text(&mut self, text: &str) -> Result<()> {
+        platform::copy_text(text)
+    }
+
     fn prompt_api_key(&mut self) -> Result<bool> {
         platform::prompt_api_key()
     }
@@ -121,17 +127,66 @@ impl Ui for Desktop {
     fn set_autostart(&mut self, enabled: bool) {
         Desktop::set_autostart(self, enabled);
     }
+
+    fn set_options(&mut self, cleanup: bool, sounds: bool, hold: bool) {
+        Desktop::set_options(self, cleanup, sounds, hold);
+    }
+}
+
+/// The open microphone as the controller sees it, so tests can stand in
+/// for a device.
+trait Microphone {
+    fn is_ready(&self) -> bool;
+    fn fault(&self) -> Option<String>;
+    fn heard_speech(&self) -> bool;
+    fn silent_for(&self) -> Duration;
+    /// Stops capturing; the audio channel closes once the microphone drops.
+    fn stop(self: Box<Self>) -> Result<()>;
+}
+
+impl Microphone for Capture {
+    fn is_ready(&self) -> bool {
+        Capture::is_ready(self)
+    }
+
+    fn fault(&self) -> Option<String> {
+        Capture::fault(self)
+    }
+
+    fn heard_speech(&self) -> bool {
+        Capture::heard_speech(self)
+    }
+
+    fn silent_for(&self) -> Duration {
+        Capture::silent_for(self)
+    }
+
+    fn stop(self: Box<Self>) -> Result<()> {
+        Capture::stop(*self)
+    }
+}
+
+/// The recording status for `elapsed` out of `limit`, as `m:ss`.
+fn recording_label(elapsed: Duration, limit: Duration) -> String {
+    let clock = |time: Duration| format!("{}:{:02}", time.as_secs() / 60, time.as_secs() % 60);
+    if elapsed + Duration::from_secs(30) >= limit {
+        format!("Recording {} · stops at {}", clock(elapsed), clock(limit))
+    } else {
+        format!("Recording {} · Escape cancels", clock(elapsed))
+    }
 }
 
 struct Session<T> {
     id: u64,
-    capture: Option<Capture>,
+    capture: Option<Box<dyn Microphone>>,
     task: JoinHandle<()>,
     target: T,
     started: Instant,
     stopped: Option<Instant>,
     incomplete: Option<String>,
     ready_announced: bool,
+    /// The elapsed second the recording status last showed.
+    shown_second: Option<u64>,
 }
 
 impl<T> Drop for Session<T> {
@@ -169,6 +224,8 @@ pub struct Controller<U: Ui> {
     runtime: Handle,
     tx: mpsc::Sender<Completed>,
     rx: mpsc::Receiver<Completed>,
+    notices_tx: mpsc::Sender<Result<KeyInfo, ApiError>>,
+    notices: mpsc::Receiver<Result<KeyInfo, ApiError>>,
     session: Option<Session<U::Target>>,
     next_id: u64,
     talk_key: PressLatch,
@@ -186,6 +243,7 @@ impl<U: Ui> Controller<U> {
             .connect_timeout(Duration::from_secs(5))
             .build()?;
         let (tx, rx) = mpsc::channel();
+        let (notices_tx, notices) = mpsc::channel();
         Ok(Self {
             ui,
             config,
@@ -196,6 +254,8 @@ impl<U: Ui> Controller<U> {
             runtime,
             tx,
             rx,
+            notices_tx,
+            notices,
             session: None,
             next_id: 0,
             talk_key: PressLatch::default(),
@@ -224,7 +284,7 @@ impl<U: Ui> Controller<U> {
             Command::CopyLast => {
                 if self.session.is_none() {
                     match Dictation::load(&self.paths.recovery())
-                        .and_then(|saved| platform::copy_text(&saved.text))
+                        .and_then(|saved| self.ui.copy_text(&saved.text))
                     {
                         Ok(()) => self.ui.status(Status::Idle, "Last dictation copied"),
                         Err(error) => self.report(&error.to_string()),
@@ -239,12 +299,12 @@ impl<U: Ui> Controller<U> {
                 }
             }
             Command::TalkReleased if self.config.mode == RecordingMode::Hold => {
-                self.stop_recording();
+                self.stop_recording("Finishing");
             }
             Command::TalkPressed | Command::Toggle => {
                 if self.session.is_some() {
                     if command == Command::Toggle || self.config.mode == RecordingMode::Toggle {
-                        self.stop_recording();
+                        self.stop_recording("Finishing");
                     }
                     return true;
                 }
@@ -258,6 +318,11 @@ impl<U: Ui> Controller<U> {
                 }
             }
             Command::TalkReleased => {}
+            Command::ToggleCleanup | Command::ToggleSounds | Command::ToggleMode => {
+                if self.session.is_none() {
+                    self.toggle_option(command);
+                }
+            }
             Command::SetApiKey
             | Command::OpenConfig
             | Command::OpenLogs
@@ -280,6 +345,7 @@ impl<U: Ui> Controller<U> {
                 if self.ui.prompt_api_key()? {
                     self.credentials = Credentials::load()?;
                     self.ui.status(Status::Idle, "API key saved");
+                    self.check_credits();
                 }
             }
             Command::OpenConfig => {
@@ -306,6 +372,101 @@ impl<U: Ui> Controller<U> {
         Ok(())
     }
 
+    /// Flips a setting from the tray and writes it to the config file.
+    fn toggle_option(&mut self, command: Command) {
+        let label = match command {
+            Command::ToggleCleanup => {
+                self.config.cleanup.enabled = !self.config.cleanup.enabled;
+                if self.config.cleanup.enabled {
+                    "Cleanup on"
+                } else {
+                    "Cleanup off"
+                }
+            }
+            Command::ToggleSounds => {
+                self.config.sounds = !self.config.sounds;
+                if self.config.sounds {
+                    "Sounds on"
+                } else {
+                    "Sounds off"
+                }
+            }
+            _ => {
+                self.config.mode = match self.config.mode {
+                    RecordingMode::Toggle => RecordingMode::Hold,
+                    RecordingMode::Hold => RecordingMode::Toggle,
+                };
+                match self.config.mode {
+                    RecordingMode::Hold => "Hold to talk",
+                    RecordingMode::Toggle => "Toggle to talk",
+                }
+            }
+        };
+        self.ui.set_options(
+            self.config.cleanup.enabled,
+            self.config.sounds,
+            self.config.mode == RecordingMode::Hold,
+        );
+        match self.config.save(&self.paths.config) {
+            Ok(()) => self.ui.status(Status::Idle, label),
+            Err(error) => self.report(&format!(
+                "{label} until Yap restarts; the config file could not be saved: {error:#}"
+            )),
+        }
+    }
+
+    /// Asks OpenRouter about the key in the background; `drain` announces
+    /// the answer.
+    pub fn check_credits(&self) {
+        let client = self.client.clone();
+        let key = self.credentials.openrouter.clone();
+        let notices = self.notices_tx.clone();
+        self.runtime.spawn(async move {
+            let result =
+                tokio::time::timeout(Duration::from_secs(5), openrouter::key_info(&client, &key))
+                    .await
+                    .unwrap_or(Err(ApiError::Timeout));
+            let _ = notices.send(result);
+        });
+    }
+
+    /// Shows the remaining credits in the ready line and warns when the
+    /// key is rejected or nearly out of money.
+    pub fn announce_credits(&mut self, result: Result<KeyInfo, ApiError>) {
+        let shortcut = &self.config.shortcut;
+        let mut ready = format!("Ready · {shortcut}");
+        let mut warning = None;
+        match result {
+            Ok(info) => {
+                if let Some(left) = info.limit_remaining {
+                    ready = format!("Ready · ${left:.2} credits · {shortcut}");
+                    if left < 1.0 {
+                        warning = Some((
+                            format!("OpenRouter credits are low: ${left:.2} left"),
+                            Cue::Warning,
+                        ));
+                    }
+                }
+            }
+            Err(ApiError::Unauthorized) => {
+                warning = Some((
+                    "OpenRouter rejected the API key. Choose Set API key… in the tray".into(),
+                    Cue::Error,
+                ));
+            }
+            Err(error) => tracing::warn!(%error, "Could not check OpenRouter credits"),
+        }
+        // A dictation that started meanwhile keeps its own status.
+        if self.session.is_none() {
+            self.ui.status(Status::Idle, &ready);
+        }
+        if let Some((message, cue)) = warning {
+            tracing::warn!("{message}");
+            self.ui.notify(&message);
+            self.cue(cue);
+        }
+    }
+
     fn start_session(&mut self) -> Result<Session<U::Target>> {
         self.next_id += 1;
         let id = self.next_id;
@@ -322,13 +483,14 @@ impl<U: Ui> Controller<U> {
         );
         Ok(Session {
             id,
-            capture: Some(capture),
+            capture: Some(Box::new(capture)),
             task,
             target,
             started,
             stopped: None,
             incomplete: None,
             ready_announced: false,
+            shown_second: None,
         })
     }
 
@@ -351,6 +513,7 @@ impl<U: Ui> Controller<U> {
             stopped: Some(now),
             incomplete: None,
             ready_announced: true,
+            shown_second: None,
         });
         self.ui.status(Status::Processing, "Retrying upload");
         Ok(())
@@ -386,44 +549,55 @@ impl<U: Ui> Controller<U> {
         })
     }
 
-    /// Reacts to the microphone and the clock: announces readiness, stops on a
-    /// fault or the length limit, and gives up on an upload that never ends.
+    /// Reacts to the microphone and the clock: announces readiness, counts
+    /// the recording time, stops on a fault, the length limit or a long
+    /// silence, and gives up on an upload that never ends.
     pub fn tick(&mut self, now: Instant) {
         let deadline = self.config.watchdog();
-        let max_recording_seconds = self.config.max_recording_seconds;
+        let limit = Duration::from_secs(self.config.max_recording_seconds);
+        let silence_limit = (self.config.mode == RecordingMode::Toggle
+            && self.config.silence_timeout_seconds > 0)
+            .then(|| Duration::from_secs(self.config.silence_timeout_seconds));
         let Some(current) = &mut self.session else {
             return;
         };
         let mut announce = false;
-        let mut stop = false;
+        let mut label = None;
+        let mut stop = None;
         if let Some(capture) = &current.capture {
+            let elapsed = now.saturating_duration_since(current.started);
             if !current.ready_announced && capture.is_ready() {
                 current.ready_announced = true;
                 announce = true;
-                tracing::info!(
-                    ready_ms = now.saturating_duration_since(current.started).as_millis(),
-                    "Microphone ready"
-                );
+                tracing::info!(ready_ms = elapsed.as_millis(), "Microphone ready");
+            }
+            if current.ready_announced && current.shown_second != Some(elapsed.as_secs()) {
+                current.shown_second = Some(elapsed.as_secs());
+                label = Some(recording_label(elapsed, limit));
             }
             if let Some(fault) = capture.fault() {
                 current.incomplete = Some(fault);
-                stop = true;
-            } else if now.saturating_duration_since(current.started).as_secs()
-                >= max_recording_seconds
+                stop = Some("Finishing".to_owned());
+            } else if elapsed >= limit {
+                stop = Some("Finishing".to_owned());
+            } else if let Some(silence) = silence_limit
+                && elapsed >= silence
+                && capture.silent_for() >= silence
             {
-                stop = true;
+                stop = Some(format!("Stopped after {} s of silence", silence.as_secs()));
             }
         }
         let timed_out = current
             .stopped
             .is_some_and(|t| now.saturating_duration_since(t) > deadline);
+        if let Some(label) = label {
+            self.ui.status(Status::Recording, &label);
+        }
         if announce {
-            self.ui
-                .status(Status::Recording, "Recording · Escape cancels");
             self.cue(Cue::Start);
         }
-        if stop {
-            self.stop_recording();
+        if let Some(text) = stop {
+            self.stop_recording(&text);
         }
         if timed_out {
             self.session = None;
@@ -434,6 +608,9 @@ impl<U: Ui> Controller<U> {
     pub fn drain(&mut self) {
         while let Ok(completed) = self.rx.try_recv() {
             self.complete(completed);
+        }
+        while let Ok(credits) = self.notices.try_recv() {
+            self.announce_credits(credits);
         }
     }
 
@@ -516,25 +693,49 @@ impl<U: Ui> Controller<U> {
                     self.cue(Cue::Done);
                 }
             }
-            Err(error) => self.report(&format!(
-                "{error}. Use Copy last dictation to recover the text"
-            )),
+            Err(error) => match self.ui.copy_text(&dictation.text) {
+                Ok(()) => self.report(&format!("{error}. The text is on your clipboard")),
+                Err(copy_error) => {
+                    tracing::warn!(error = %copy_error, "Could not copy the text after a failed paste");
+                    self.report(&format!(
+                        "{error}. Use Copy last dictation to recover the text"
+                    ));
+                }
+            },
         }
     }
 
-    fn stop_recording(&mut self) {
+    /// Closes the microphone and lets the upload start, showing `text`. A
+    /// recording that never heard speech is dropped instead of uploaded.
+    fn stop_recording(&mut self, text: &str) {
         let Some(current) = &mut self.session else {
             return;
         };
         let Some(capture) = current.capture.take() else {
             return;
         };
+        if !capture.heard_speech() {
+            // Abort first: closing the audio channel is what starts the upload.
+            current.task.abort();
+            let fault = current.incomplete.take();
+            let _ = capture.stop();
+            self.session = None;
+            self.release_cancel();
+            match fault {
+                Some(fault) => self.report(&fault),
+                None => {
+                    self.ui.status(Status::Idle, "No speech detected");
+                    self.cue(Cue::Stop);
+                }
+            }
+            return;
+        }
         current.stopped = Some(Instant::now());
         if let Err(error) = capture.stop() {
             current.incomplete = Some(error.to_string());
         }
         self.release_cancel();
-        self.ui.status(Status::Processing, "Finishing");
+        self.ui.status(Status::Processing, text);
         self.cue(Cue::Stop);
     }
 
@@ -573,6 +774,11 @@ pub fn run(config: Config, paths: Paths, credentials: Credentials) -> Result<()>
     let runtime = runtime()?;
     let mut desktop = Desktop::new(&config.shortcut.parse()?)?;
     desktop.set_autostart(platform::autostart_enabled());
+    desktop.set_options(
+        config.cleanup.enabled,
+        config.sounds,
+        config.mode == RecordingMode::Hold,
+    );
     let (quit_tx, quit_rx) = mpsc::channel();
     runtime.spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
@@ -587,6 +793,7 @@ pub fn run(config: Config, paths: Paths, credentials: Credentials) -> Result<()>
         credentials,
         runtime.handle().clone(),
     )?;
+    controller.check_credits();
 
     'running: loop {
         let commands = controller.ui_mut().poll(Duration::from_millis(15))?;
