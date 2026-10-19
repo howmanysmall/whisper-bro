@@ -154,10 +154,11 @@ fn register(shortcut: &Hotkey, id: u32) -> Result<Ref> {
             &mut handle,
         )
     };
-    if status != 0 {
-        bail!(
-            "Shortcut is unavailable or already in use (macOS {status}). Change shortcut in config.toml"
-        );
+    match status {
+        0 => {}
+        -9878 => bail!("Another app already registered {shortcut}. Change shortcut in config.toml"),
+        -50 => bail!("{shortcut} isn't a valid macOS shortcut. Change shortcut in config.toml"),
+        _ => bail!("{shortcut} is unavailable (macOS {status}). Change shortcut in config.toml"),
     }
     Ok(handle)
 }

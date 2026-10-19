@@ -22,6 +22,7 @@ unsafe extern "C" {
         attribute: CFStringRef,
         value: *mut CFTypeRef,
     ) -> i32;
+    fn AXUIElementSetMessagingTimeout(element: CFTypeRef, seconds: f32) -> i32;
     fn CGEventCreateKeyboardEvent(source: *const c_void, key: u16, down: bool) -> CFTypeRef;
     fn CGEventSetFlags(event: CFTypeRef, flags: u64);
     fn CGEventPost(tap: u32, event: CFTypeRef);
@@ -32,7 +33,8 @@ pub fn trusted() -> bool {
     unsafe { AXIsProcessTrusted() }
 }
 
-pub fn focused(pid: i32) -> Result<CFType> {
+/// Shows the Accessibility prompt at launch instead of on the first shortcut press.
+pub fn prompt() {
     if !trusted() {
         let options = CFDictionary::from_CFType_pairs(&[(
             CFString::new("AXTrustedCheckOptionPrompt"),
@@ -42,6 +44,9 @@ pub fn focused(pid: i32) -> Result<CFType> {
             AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef());
         }
     }
+}
+
+pub fn focused(pid: i32) -> Result<CFType> {
     ensure!(
         trusted(),
         "Enable Accessibility for Yap in System Settings → Privacy & Security → Accessibility, then restart it"
@@ -49,6 +54,10 @@ pub fn focused(pid: i32) -> Result<CFType> {
     let pointer = unsafe { AXUIElementCreateApplication(pid) };
     ensure!(!pointer.is_null(), "Could not inspect the foreground app");
     let application = unsafe { CFType::wrap_under_create_rule(pointer) };
+    // A hung app would otherwise block the main thread for the default ~6 s per call.
+    unsafe {
+        AXUIElementSetMessagingTimeout(application.as_CFTypeRef(), 0.5);
+    }
     let mut value = ptr::null();
     let attribute = CFString::new("AXFocusedUIElement");
     let status = unsafe {
@@ -58,6 +67,11 @@ pub fn focused(pid: i32) -> Result<CFType> {
             &mut value,
         )
     };
+    // kAXErrorCannotComplete: the app did not answer within the messaging timeout.
+    ensure!(
+        status != -25204,
+        "The foreground app is not responding; try again once it recovers"
+    );
     ensure!(
         status == 0 && !value.is_null(),
         "Could not identify the focused text field; click a text field first"
