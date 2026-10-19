@@ -67,6 +67,7 @@ pub struct Desktop {
     cancel: bool,
     held: bool,
     key: i32,
+    shortcut: Hotkey,
     taskbar_created: u32,
     _ole: clipboard::Ole,
 }
@@ -170,31 +171,10 @@ impl Desktop {
                 cancel: false,
                 held: false,
                 key: key_code(shortcut.key) as i32,
+                shortcut: shortcut.clone(),
                 taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")),
             };
-            let modifiers = MOD_NOREPEAT
-                | if shortcut.control {
-                    MOD_CONTROL
-                } else {
-                    HOT_KEY_MODIFIERS(0)
-                }
-                | if shortcut.alt {
-                    MOD_ALT
-                } else {
-                    HOT_KEY_MODIFIERS(0)
-                }
-                | if shortcut.shift {
-                    MOD_SHIFT
-                } else {
-                    HOT_KEY_MODIFIERS(0)
-                }
-                | if shortcut.command {
-                    MOD_WIN
-                } else {
-                    HOT_KEY_MODIFIERS(0)
-                };
-            RegisterHotKey(Some(window), TALK_ID, modifiers, key_code(shortcut.key))
-                .context("Shortcut is already in use. Change shortcut in config.toml")?;
+            register_talk(window, shortcut)?;
             wide_into("Yap", &mut desktop.icon.szTip);
             ensure!(
                 Shell_NotifyIconW(NIM_ADD, &desktop.icon).as_bool(),
@@ -236,6 +216,23 @@ impl Desktop {
             }
         }
         Ok(commands)
+    }
+
+    /// Switches the dictation shortcut. When Windows refuses the new
+    /// combination the old one is registered again.
+    pub fn rebind(&mut self, shortcut: &Hotkey) -> Result<()> {
+        unsafe {
+            UnregisterHotKey(Some(self.window), TALK_ID)?;
+        }
+        if let Err(error) = register_talk(self.window, shortcut) {
+            if let Err(restore) = register_talk(self.window, &self.shortcut) {
+                tracing::warn!(error = %format!("{restore:#}"), "Could not restore the old shortcut");
+            }
+            return Err(error);
+        }
+        self.shortcut = shortcut.clone();
+        self.key = key_code(shortcut.key) as i32;
+        Ok(())
     }
 
     pub fn cancel_shortcut(&mut self, enabled: bool) -> Result<()> {
@@ -568,6 +565,20 @@ fn popup(window: HWND, shared: &Shared) -> Result<Option<Command>> {
         let _ = DestroyMenu(menu);
         result
     }
+}
+
+/// Registers `shortcut` as the dictation hotkey on `window`.
+fn register_talk(window: HWND, shortcut: &Hotkey) -> Result<()> {
+    let modifier = |held: bool, flag: HOT_KEY_MODIFIERS| {
+        if held { flag } else { HOT_KEY_MODIFIERS(0) }
+    };
+    let modifiers = MOD_NOREPEAT
+        | modifier(shortcut.control, MOD_CONTROL)
+        | modifier(shortcut.alt, MOD_ALT)
+        | modifier(shortcut.shift, MOD_SHIFT)
+        | modifier(shortcut.command, MOD_WIN);
+    unsafe { RegisterHotKey(Some(window), TALK_ID, modifiers, key_code(shortcut.key)) }
+        .with_context(|| format!("{shortcut} is already in use. Change shortcut in config.toml"))
 }
 
 fn key_code(key: Key) -> u32 {

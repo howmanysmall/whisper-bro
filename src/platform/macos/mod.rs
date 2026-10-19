@@ -224,6 +224,14 @@ impl Desktop {
         self.keys.cancel(enabled)
     }
 
+    /// Switches the dictation shortcut; the Escape cancel stays as it was.
+    pub fn rebind(&mut self, shortcut: &Hotkey) -> Result<()> {
+        if let Some(message) = permissions::input_switch_conflict(shortcut) {
+            bail!(message);
+        }
+        self.keys.rebind(shortcut)
+    }
+
     pub fn status(&mut self, status: Status, text: &str) {
         self.label.setTitle(&NSString::from_str(text));
         self.toggle

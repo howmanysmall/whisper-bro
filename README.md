@@ -76,7 +76,9 @@ On Windows, a normal app can't type into an elevated app. If the target runs as 
 
 ## Configure
 
-`yap config` prints the configuration path and effective settings. Edit that TOML file and restart Yap. This example shows every setting at its default, except that `microphone` is commented out because it has no default:
+`yap config` prints the configuration path and effective settings. Edit that TOML file, and Yap reloads it as soon as you save it. A broken edit is reported and ignored, so Yap keeps the settings it had. A change made during a dictation applies when that dictation ends. A new shortcut is rebound live, and a new microphone is used from the next recording.
+
+This example shows every setting at its default, except that `microphone` is commented out because it has no default:
 
 ```toml
 shortcut = "Ctrl+Alt+Space"

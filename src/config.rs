@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{hotkey::Hotkey, storage::write_private};
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub shortcut: String,
@@ -36,7 +36,7 @@ pub enum RecordingMode {
     Hold,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct CleanupConfig {
     pub enabled: bool,

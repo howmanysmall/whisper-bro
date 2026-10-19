@@ -30,6 +30,7 @@ enum Event {
     /// Cleanup, sounds and hold-to-talk checkmarks.
     SetOptions(bool, bool, bool),
     Preview(String),
+    Rebind(String),
 }
 
 struct FakeUi {
@@ -38,6 +39,7 @@ struct FakeUi {
     copy_result: Result<(), String>,
     /// What the key prompt answers: true as if the user saved a key.
     prompt_result: bool,
+    rebind_result: Result<(), String>,
     recovery: PathBuf,
     /// What the HUD or overlay would show, driven the way the platforms drive it.
     panel: Panel,
@@ -114,6 +116,13 @@ impl Ui for FakeUi {
         self.panel.preview(text);
         self.events.push(Event::Preview(text.into()));
     }
+
+    fn rebind(&mut self, shortcut: &Hotkey) -> Result<()> {
+        self.events.push(Event::Rebind(shortcut.to_string()));
+        self.rebind_result
+            .clone()
+            .map_err(|message| anyhow!(message))
+    }
 }
 
 /// A microphone that reports fixed readings; dropping it closes `audio`,
@@ -175,6 +184,7 @@ impl Harness {
             paste_result: Ok(()),
             copy_result: Ok(()),
             prompt_result: false,
+            rebind_result: Ok(()),
             recovery: paths.recovery(),
             panel: Panel::default(),
         };
@@ -1211,4 +1221,178 @@ fn with_live_preview_off_only_the_full_recording_is_uploaded() {
             .events()
             .contains(&Event::Paste("Keep the final word: café.".into(), true))
     );
+}
+
+impl Harness {
+    /// Saves `contents` as the config file with a modification time no
+    /// earlier write shares, and signals the change as the watcher would.
+    fn edit_config(&mut self, contents: &str) {
+        self.write_config(contents);
+        self.controller.config_changes_tx.send(()).unwrap();
+    }
+
+    fn write_config(&self, contents: &str) {
+        fs::write(&self.controller.paths.config, contents).unwrap();
+        self.stamp_config();
+    }
+
+    /// Moves the config file's modification time forward a full second, so
+    /// filesystems with one-second timestamps still see a new write.
+    fn stamp_config(&self) {
+        let path = &self.controller.paths.config;
+        let previous = fs::metadata(path).unwrap().modified().unwrap();
+        let later = self
+            .controller
+            .config_stamp
+            .map_or(previous, |(time, _)| time.max(previous))
+            + Duration::from_secs(1);
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+    }
+
+    /// Ticks once now and once after the change has settled.
+    fn settle(&mut self) {
+        let now = Instant::now();
+        self.controller.tick(now);
+        self.controller.tick(now + Duration::from_millis(250));
+    }
+}
+
+#[test]
+fn a_saved_config_change_applies_once_it_settles() {
+    let mut harness = Harness::new();
+
+    harness.edit_config("sounds = false\n");
+    let now = Instant::now();
+    harness.controller.tick(now);
+    assert!(
+        harness.controller.config.sounds,
+        "applied before the writes settled"
+    );
+    harness.controller.tick(now + Duration::from_millis(250));
+
+    assert!(!harness.controller.config.sounds);
+    assert!(
+        harness
+            .events()
+            .contains(&Event::SetOptions(false, false, false))
+    );
+    assert_eq!(
+        harness.last_status(),
+        Some((Status::Idle, "Settings reloaded · Ctrl+Alt+Space"))
+    );
+}
+
+#[test]
+fn a_broken_config_edit_is_reported_and_ignored() {
+    let mut harness = Harness::new();
+
+    harness.edit_config("sounds = maybe\n");
+    harness.settle();
+
+    let (status, text) = harness.last_status().unwrap();
+    assert_eq!(status, Status::Error);
+    assert!(text.contains("config.toml"), "{text}");
+    assert_eq!(harness.controller.config, Config::default());
+
+    let before = harness.events().len();
+    harness.controller.config_changes_tx.send(()).unwrap();
+    harness.settle();
+    assert_eq!(
+        harness.events().len(),
+        before,
+        "the same error was repeated"
+    );
+}
+
+#[test]
+fn a_change_during_a_dictation_waits_until_it_ends() {
+    let mut harness = Harness::new();
+    harness.uploading(1, Some(Instant::now()), None);
+
+    harness.edit_config("sounds = false\n");
+    harness.settle();
+    assert!(harness.controller.config.sounds);
+    assert!(
+        !harness
+            .events()
+            .iter()
+            .any(|e| matches!(e, Event::Status(_, t) if t.starts_with("Settings reloaded")))
+    );
+
+    harness.controller.complete(finished(1, "hello"));
+    harness.controller.tick(Instant::now());
+
+    assert!(!harness.controller.config.sounds);
+    assert_eq!(
+        harness.last_status(),
+        Some((Status::Idle, "Settings reloaded · Ctrl+Alt+Space"))
+    );
+}
+
+#[test]
+fn rewriting_the_same_settings_is_silent() {
+    let mut harness = Harness::new();
+
+    Config::default()
+        .save(&harness.controller.paths.config)
+        .unwrap();
+    harness.stamp_config();
+    harness.controller.config_changes_tx.send(()).unwrap();
+    harness.settle();
+
+    assert!(harness.events().is_empty(), "{:?}", harness.events());
+}
+
+#[test]
+fn a_new_shortcut_is_rebound_live() {
+    let mut harness = Harness::new();
+
+    harness.edit_config("shortcut = \"Ctrl+Alt+F9\"\n");
+    harness.settle();
+
+    assert!(
+        harness
+            .events()
+            .contains(&Event::Rebind("Ctrl+Alt+F9".into()))
+    );
+    assert_eq!(harness.controller.config.shortcut, "Ctrl+Alt+F9");
+    assert_eq!(
+        harness.last_status(),
+        Some((Status::Idle, "Settings reloaded · Ctrl+Alt+F9"))
+    );
+}
+
+#[test]
+fn a_shortcut_that_cannot_be_bound_keeps_the_old_one() {
+    let mut harness = Harness::new();
+    harness.controller.ui.rebind_result = Err("Another app already registered Ctrl+Alt+F9".into());
+
+    harness.edit_config("shortcut = \"Ctrl+Alt+F9\"\nsounds = false\n");
+    harness.settle();
+
+    let (status, text) = harness.last_status().unwrap();
+    assert_eq!(status, Status::Error);
+    assert!(text.contains("Another app already registered"), "{text}");
+    assert!(text.contains("Keeping Ctrl+Alt+Space"), "{text}");
+    assert_eq!(harness.controller.config.shortcut, "Ctrl+Alt+Space");
+    assert!(!harness.controller.config.sounds);
+}
+
+#[test]
+fn the_watcher_signals_a_saved_config_file() {
+    let mut harness = Harness::new();
+    harness.controller.watch_config().unwrap();
+
+    harness.write_config("sounds = false\n");
+
+    let arrived = harness
+        .controller
+        .config_changes
+        .recv_timeout(Duration::from_secs(3));
+    assert!(arrived.is_ok(), "no change event within 3 s");
 }
