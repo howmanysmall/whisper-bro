@@ -31,7 +31,7 @@ None of them carry a real signature yet, so the first launch is blocked.
 
 1. Get a key from [OpenRouter](https://openrouter.ai/settings/keys).
 2. Start Yap. The packaged app asks for the key at launch when none is stored. You can also choose **Set API key…** in the tray or menu-bar menu, or run `yap setup` in a terminal.
-3. Setup stores the key in macOS Keychain or Windows Credential Manager. Pressing Enter at the key prompt keeps the stored key. The next prompt turns cleanup on with `y`, and pressing Enter there turns cleanup off. An `OPENROUTER_API_KEY` environment variable takes precedence over the stored key.
+3. Setup stores the key in macOS Keychain or Windows Credential Manager. Pressing Enter at the key prompt keeps the stored key. The next prompt turns cleanup on with `y`, and pressing Enter there turns cleanup off. Yap uses the stored key first. The `OPENROUTER_API_KEY` environment variable is only a fallback when no key is stored, so keys that other tools keep in your environment don't get picked up. `yap doctor` shows which one is in use.
 4. On macOS, grant Microphone and Accessibility access to Yap in **System Settings → Privacy & Security** when the prompts appear. Restart Yap after you change the Accessibility permission. Use the packaged app for a stable permission identity. A run from a terminal may attribute permissions to the terminal instead.
 5. On Windows, enable microphone access for desktop apps.
 6. To start Yap at login, choose **Start at login** in the menu or run `yap autostart enable`. When mise installed Yap, the login item launches mise's `yap` shim, so it survives `mise up`.
@@ -188,7 +188,7 @@ Run `yap doctor` first. It prints the version, the config path and whether it pa
 - **Recording captures nothing on macOS.** Microphone access is denied, and macOS then delivers silence. Allow Yap in System Settings → Privacy & Security → Microphone.
 - **"Another app already registered" the shortcut.** Another program owns the key combination. Change `shortcut` in `config.toml`. On macOS, Ctrl+Alt+Space can also collide with an input-source switch shortcut. Change one of the two.
 - **Yap can't paste into one Windows app.** That app probably runs as administrator. Recover the text from the tray and paste it yourself.
-- **"OpenRouter rejected the API key".** Choose **Set API key…** or run `yap setup` with a new key. Check the `OPENROUTER_API_KEY` environment variable too, because it overrides the stored key.
+- **"OpenRouter rejected the API key".** Choose **Set API key…** or run `yap setup` with a new key. Yap uses the stored key first, and the `OPENROUTER_API_KEY` environment variable only matters when no key is stored. `yap doctor` shows which one is in use.
 - **"OpenRouter account has no credits".** Add credit at OpenRouter. Then use **Retry last recording**.
 - **`config.toml` is broken.** Every command still works, and Yap falls back to defaults where it can. `yap doctor` names the error. Fix the file, or delete it to start over.
 - **A clipboard manager shows or misses dictations.** Yap marks its clipboard writes as transient. Managers that ignore the mark still record them. Pause the manager or exclude Yap.

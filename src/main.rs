@@ -200,18 +200,26 @@ fn doctor(paths: &Paths) -> Result<()> {
             "yes"
         }
     );
-    let key = credentials::get("OPENROUTER_API_KEY")?;
+    let key = credentials::get_with_source("OPENROUTER_API_KEY")?;
     let status = match key {
         None => "not configured".to_owned(),
-        Some(key) => app::runtime()?.block_on(async {
+        Some((key, source)) => app::runtime()?.block_on(async {
             let client = reqwest::Client::new();
-            match tokio::time::timeout(Duration::from_secs(5), openrouter::key_info(&client, &key))
-                .await
+            let described = match tokio::time::timeout(
+                Duration::from_secs(5),
+                openrouter::key_info(&client, &key),
+            )
+            .await
             {
                 Ok(Ok(info)) => describe_key(&info),
                 Ok(Err(error)) => error.to_string(),
                 Err(_) => openrouter::ApiError::Timeout.to_string(),
-            }
+            };
+            let label = match source {
+                credentials::Source::Stored => "stored key",
+                credentials::Source::Environment => "environment variable",
+            };
+            format!("{described} [{label}]")
         }),
     };
     println!("OPENROUTER_API_KEY: {status}");
