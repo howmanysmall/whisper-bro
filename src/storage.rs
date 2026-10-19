@@ -70,6 +70,19 @@ impl Paths {
     pub fn recovery(&self) -> PathBuf {
         self.data.join("last-dictation.json")
     }
+
+    /// The WAV of the last recording whose upload failed, kept for a retry.
+    pub fn last_recording(&self) -> PathBuf {
+        self.data.join("last-recording.wav")
+    }
+
+    /// Deletes the kept recording, if there is one.
+    pub fn discard_last_recording(&self) -> std::io::Result<()> {
+        match fs::remove_file(self.last_recording()) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

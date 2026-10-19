@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{fs, path::Path, time::Duration};
 
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -133,6 +133,13 @@ impl Config {
             "Vocabulary terms cannot be blank"
         );
         Ok(())
+    }
+
+    /// How long after recording stops the app waits for a result before
+    /// giving up: two transcription attempts, cleanup, and slack for the
+    /// retry pause and the paste.
+    pub fn watchdog(&self) -> Duration {
+        Duration::from_millis(2 * self.transcription_timeout_ms + self.cleanup.timeout_ms + 8000)
     }
 
     /// The language hint for transcription, or `None` to let the model detect it.

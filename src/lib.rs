@@ -8,3 +8,5 @@ pub mod openrouter;
 pub mod platform;
 pub mod speech;
 pub mod storage;
+#[cfg(test)]
+pub(crate) mod test_support;
